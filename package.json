@@ -1,0 +1,39 @@
+{
+  "name": "ssv-automate",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@safe-global/api-kit": "^2.3.0",
+    "@types/commander": "^2.12.2",
+    "@types/figlet": "^1.5.8",
+    "@types/node": "^20.9.0",
+    "axios": "^1.6.1",
+    "axios-rate-limit": "^1.3.0",
+    "commander": "^11.1.0",
+    "ethers": "^6.12.0",
+    "exec": "^0.2.1",
+    "figlet": "^1.7.0",
+    "glob": "^10.3.10",
+    "ora": "^7.0.1",
+    "web3": "^4.2.2"
+  },
+  "description": "To install dependencies:",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RaekwonIII/ssv-etherfi.git"
+  },
+  "keywords": [],
+  "author": "Massimo Luraschi",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/RaekwonIII/ssv-etherfi/issues"
+  },
+  "homepage": "https://github.com/RaekwonIII/ssv-etherfi#readme"
+}
