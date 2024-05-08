@@ -1,4 +1,4 @@
-# ssv-automate
+# ssv-etherfi
 
 
 ## Dependencies installation
