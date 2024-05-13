@@ -77,6 +77,8 @@ etherfi
     console.info(figlet.textSync("SSV <> EtherFi"));
     console.info("Automating registration with multi-sig");
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
+    if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
+    if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
 
     let clusterSnapshot = await getClusterSnapshot(
       process.env.SAFE_ADDRESS,
@@ -90,8 +92,8 @@ etherfi
       clusterSnapshot.validatorCount
     );
 
-    const provider = new ethers.JsonRpcProvider(`${process.env.RPC_ENDPOINT}`);
-    const signer = new ethers.Wallet(process.env.PRIVATE_KEY || "", provider);
+    const provider = new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT);
+    const signer = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
     const ethAdapter = new EthersAdapter({
       ethers,
       signerOrProvider: signer,
@@ -127,8 +129,6 @@ etherfi
           bulkRegistrationTxData
         );
         // verify status
-        await checkAndExecuteSignatures(ethAdapter, multiSigTxHash);
-        // execute
         await checkAndExecuteSignatures(ethAdapter, multiSigTxHash);
       }
       catch (error) {
