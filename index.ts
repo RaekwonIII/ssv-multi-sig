@@ -2,19 +2,15 @@
 import { Command } from 'commander';
 
 import { spinnerError, stopSpinner } from "./src/spinner";
-import { onboard } from "./src/commands/onboard";
-import { ping } from "./src/commands/ping-lido-operators"
-import { mergeDeposit } from "./src/commands/merge-deposit"
-import { offboard } from "./src/commands/offboard"
+import { etherfi } from "./src/commands/etherfi";
+
 
 const program = new Command();
 program
-.description('A simple demonstrative command line tool to automate tasks such as testing Simple DVT operator onboarding, pinging their DKG node, and merging deposit files')
+.description('A command line tool to register operators to a validator in bulk using a multisig wallet.')
 .version('0.0.1')
-.addCommand(offboard)
-.addCommand(mergeDeposit)
-.addCommand(ping)
-.addCommand(onboard);
+.addCommand(etherfi)
+
 
 process.on('unhandledRejection', function (err: Error) { // listen for unhandled promise rejections
     const debug = program.opts().verbose; // is the --verbose flag set?

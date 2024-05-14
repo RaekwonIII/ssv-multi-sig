@@ -99,7 +99,9 @@ etherfi
       signerOrProvider: signer,
     });
 
-    for (let fourtyKeyshares of [...chunks(keyshares, 40)]) {
+    //console.debug('KEYSHARES: ', keyshares)
+
+    for (let fourtyKeyshares of [...chunks(keyshares, 2)]) {
       let bulkRegistrationTxData
       try {
         // build tx
@@ -148,6 +150,7 @@ etherfi
 
     spinnerSuccess();
     // increment nonce
+    console.log("KS LENGTH: ", keyshares.length)
     nonce += keyshares.length;
     updateSpinnerText(`Next user nonce is ${nonce}`);
     spinnerSuccess();
@@ -155,7 +158,7 @@ etherfi
     console.log(`Encountered ${problems.size} problem(s)\n`);
 
     for (let problem of problems) {
-      console.error(`Encountered issue with files ${problem[0]}`);
+      console.error(`Encountered issue when processing keystore file: ${problem[0]}`);
       console.error(problem[1]);
     }
 
@@ -174,7 +177,7 @@ async function getOwnerNonceFromSubgraph(owner: string): Promise<number> {
       method: "POST",
       url:
         process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-ethereum/version/latest",
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
       headers: {
         "content-type": "application/json",
       },
@@ -218,7 +221,7 @@ async function getClusterSnapshot(
       method: "POST",
       url:
         process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-ethereum/version/latest",
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
       headers: {
         "content-type": "application/json",
       },
@@ -239,12 +242,20 @@ async function getClusterSnapshot(
       },
     });
     if (response.status !== 200) throw Error("Request did not return OK");
-    if (!response.data.data.cluster) throw Error("Response is empty");
 
-    let clusterObj = response.data.data.cluster;
+    if (!response.data.data.cluster) {
+        clusterSnapshot = {
+        validatorCount: 0,
+        networkFeeIndex: 0,
+        index: 0,
+        active: false,
+        balance: 0
+      }
+    } else {
+      clusterSnapshot = response.data.data.cluster
+    }
 
-    console.debug(`Cluster Snapshot:\n\n${clusterObj.validatorCount}`);
-    clusterSnapshot = clusterObj;
+    console.debug(`Cluster Snapshot:${clusterSnapshot.validatorCount}`);
   } catch (err) {
     console.error("ERROR DURING AXIOS REQUEST", err);
   } finally {
@@ -293,10 +304,11 @@ async function getKeyshareObjects(
 }
 
 async function getBulkRegistrationTxData(
-  sharesDataArray: ShareObject[],
+  sharesDataObjectArray: ShareObject[],
   owner: string,
   signer: ethers.Wallet
 ) {
+
   /* next, create the item */
   let contract = new ethers.Contract(
     process.env.SSV_CONTRACT || "",
@@ -304,10 +316,15 @@ async function getBulkRegistrationTxData(
     signer
   );
 
-  let pubkeys = sharesDataArray.map((sharesData) => {
-    sharesData.payload.publicKey;
+  let pubkeys = sharesDataObjectArray.map((keyshareFile) => {
+    return keyshareFile.payload.publicKey;
   });
-  let operatorIds = sharesDataArray[0].payload.operatorIds;
+
+  let sharesData = sharesDataObjectArray.map((keyshareFile) => {
+    return keyshareFile.payload.sharesData;
+  });
+
+  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
   let amount = ethers.parseEther("10");
   const clusterSnapshot = await getClusterSnapshot(owner, operatorIds);
 
@@ -315,7 +332,7 @@ async function getBulkRegistrationTxData(
   let transaction = await contract.bulkRegisterValidator(
     pubkeys,
     operatorIds,
-    sharesDataArray,
+    sharesData,
     amount,
     clusterSnapshot,
     {
@@ -323,8 +340,7 @@ async function getBulkRegistrationTxData(
     }
   );
 
-  // let res = await transaction.wait();
-  console.debug(`Transaction data: `, transaction.data);
+  //console.debug(`Transaction data: `, transaction.data);
   return transaction.data;
 }
 
@@ -332,16 +348,20 @@ async function createMultiSigTx(
   ethAdapter: EthersAdapter,
   transaction_data: string
 ) {
+
   const safeService = new SafeApiKit({
-    // chainId: 17000n, // Holesky
-    chainId: 1n, // Mainnet
+    chainId: 17000n, // Holesky
+    //chainId: 1n, // Mainnet
+    txServiceUrl: `${process.env.TX_SERVICE}` // Only needed for holesky
   });
 
+
   // Create Safe instance
-  const protocolKit = await Safe.create({
+  let protocolKit = await Safe.create({
     ethAdapter,
     safeAddress: `${process.env.SAFE_ADDRESS}`,
   });
+  
 
   // Create transaction
   const safeTransactionData: MetaTransactionData = {
@@ -363,14 +383,24 @@ async function createMultiSigTx(
   const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
   const signature = await protocolKit.signHash(safeTxHash);
 
+
+  console.debug("safe address", await protocolKit.getAddress())
+  console.debug("safeTransactionData", safeTransactionData.data)
+  console.debug("safeTxHash", safeTxHash)
+  console.debug("senderAddress", senderAddress)
+  console.debug("signature.data", signature.data)
+
   // Propose transaction to the service
   await safeService.proposeTransaction({
     safeAddress: await protocolKit.getAddress(),
+    safeTxHash: safeTxHash,
     safeTransactionData: safeTransaction.data,
-    safeTxHash,
-    senderAddress,
+    senderAddress: senderAddress,
     senderSignature: signature.data,
   });
+
+  console.debug("proposeTransaction PASSED")
+
 
   return safeTxHash;
 }
