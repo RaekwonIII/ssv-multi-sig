@@ -8,20 +8,21 @@ import {
 } from "../spinner";
 import figlet from "figlet";
 import axios from "axios";
-import { EthersAdapter } from "@safe-global/protocol-kit";
-import Safe from "@safe-global/protocol-kit";
 import {
   MetaTransactionData,
   OperationType,
+  SafeTransaction
 } from "@safe-global/safe-core-sdk-types";
 
-import { ethers } from "ethers";
-
 import { readFileSync } from "fs";
+import { glob } from "glob";
 
 import SSVContract from "../../abi/SSVNetwork.json";
+
+import { ethers } from "ethers";
 import SafeApiKit, { SafeApiKitConfig } from "@safe-global/api-kit";
-import { glob } from "glob";
+import { EthersAdapter } from "@safe-global/protocol-kit";
+import Safe from "@safe-global/protocol-kit";
 
 export const etherfi = new Command("etherfi");
 
@@ -99,7 +100,6 @@ etherfi
       signerOrProvider: signer,
     });
 
-    //console.debug('KEYSHARES: ', keyshares)
 
     for (let fourtyKeyshares of [...chunks(keyshares, 2)]) {
       let bulkRegistrationTxData
@@ -126,12 +126,13 @@ etherfi
       
       try {
         // create multi sig tx
-        let multiSigTxHash = await createMultiSigTx(
+        let multiSigTransaction = await createApprovedMultiSigTx(
           ethAdapter,
           bulkRegistrationTxData
         );
+        console.info("Created multi-sig tx:", multiSigTransaction)
         // verify status
-        await checkAndExecuteSignatures(ethAdapter, multiSigTxHash);
+        await checkAndExecuteSignatures(ethAdapter, multiSigTransaction);
       }
       catch (error) {
         spinnerError();
@@ -150,8 +151,7 @@ etherfi
 
     spinnerSuccess();
     // increment nonce
-    console.log("KS LENGTH: ", keyshares.length)
-    nonce += keyshares.length;
+    nonce = nonce + keyshares.length;
     updateSpinnerText(`Next user nonce is ${nonce}`);
     spinnerSuccess();
 
@@ -197,7 +197,7 @@ async function getOwnerNonceFromSubgraph(owner: string): Promise<number> {
     let ownerObj = response.data.data.account;
 
     console.debug(`Owner nonce:\n\n${ownerObj.nonce}`);
-    nonce = ownerObj.nonce;
+    nonce = Number(ownerObj.nonce);
   } catch (err) {
     console.error("ERROR DURING AXIOS REQUEST", err);
   } finally {
@@ -271,7 +271,7 @@ async function getKeyshareObjects(
     nodir: true,
   });
   console.info(
-    `Found ${keyshareFilesPathList.length} keyshares files in the provided folder`
+    `Found ${keyshareFilesPathList.length} keyshares files in ${dir} folder`
   );
   let validatorsCount = clusterValidators;
   let keysharesObjectsList: Array<ShareObject> = []
@@ -328,8 +328,8 @@ async function getBulkRegistrationTxData(
   let amount = ethers.parseEther("10");
   const clusterSnapshot = await getClusterSnapshot(owner, operatorIds);
 
-  // This needs approval for spending SSV token
-  let transaction = await contract.bulkRegisterValidator(
+  
+  let transaction = await contract.bulkRegisterValidator.populateTransaction(
     pubkeys,
     operatorIds,
     sharesData,
@@ -344,17 +344,10 @@ async function getBulkRegistrationTxData(
   return transaction.data;
 }
 
-async function createMultiSigTx(
+async function createApprovedMultiSigTx(
   ethAdapter: EthersAdapter,
   transaction_data: string
 ) {
-
-  const safeService = new SafeApiKit({
-    chainId: 17000n, // Holesky
-    //chainId: 1n, // Mainnet
-    txServiceUrl: `${process.env.TX_SERVICE}` // Only needed for holesky
-  });
-
 
   // Create Safe instance
   let protocolKit = await Safe.create({
@@ -362,7 +355,6 @@ async function createMultiSigTx(
     safeAddress: `${process.env.SAFE_ADDRESS}`,
   });
   
-
   // Create transaction
   const safeTransactionData: MetaTransactionData = {
     to: `${process.env.SSV_CONTRACT}`,
@@ -371,81 +363,53 @@ async function createMultiSigTx(
     operation: OperationType.Call,
   };
 
-  const safeTransaction = await protocolKit.createTransaction({
+  return await protocolKit.createTransaction({
     transactions: [safeTransactionData],
   });
-
-  const senderAddress = await ethAdapter.getSigner()?.getAddress();
-  if (!senderAddress) {
-    console.error("No Ethereum signer provided");
-    throw Error("No Ethereum signer provided");
-  }
-  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
-  const signature = await protocolKit.signHash(safeTxHash);
-
-
-  console.debug("safe address", await protocolKit.getAddress())
-  console.debug("safeTransactionData", safeTransactionData.data)
-  console.debug("safeTxHash", safeTxHash)
-  console.debug("senderAddress", senderAddress)
-  console.debug("signature.data", signature.data)
-
-  // Propose transaction to the service
-  await safeService.proposeTransaction({
-    safeAddress: await protocolKit.getAddress(),
-    safeTxHash: safeTxHash,
-    safeTransactionData: safeTransaction.data,
-    senderAddress: senderAddress,
-    senderSignature: signature.data,
-  });
-
-  console.debug("proposeTransaction PASSED")
-
-
-  return safeTxHash;
 }
 
 async function checkAndExecuteSignatures(
   ethAdapter: EthersAdapter,
-  safeTxHash: string
+  safeTransaction: SafeTransaction
 ) {
-  let apiConfObj: SafeApiKitConfig = {
-    // if the set network is holesky, use its chain ID, otherwise, if mainnet, use its chain ID. Defaults to mainnet
-    chainId: process.env.NETWORK == "holesky" ? 1700n : process.env.NETWORK == "mainnet" ? 1n : 1n
-  }
-  // if the configuration provides a transaction service, set it
-  if (process.env.TX_SERVICE && process.env.TX_SERVICE !== "") apiConfObj.txServiceUrl = process.env.TX_SERVICE
-
-  const safeService = new SafeApiKit(apiConfObj);
-  const tx = await safeService.getTransaction(safeTxHash);
-
-  const confirmations = await safeService.getTransactionConfirmations(
-    safeTxHash
-  );
-
-  // if signatures >> treshold: execute
-  // else: sign
-  if (confirmations.count < tx.confirmationsRequired) {
-    // complain
-    throw Error(
-      `Transaction threshold is ${tx.confirmationsRequired}, and ${confirmations.count} have been made`
-    );
-  }
 
   // // Create Safe instance
   const protocolKit = await Safe.create({
     ethAdapter,
     safeAddress: `${process.env.SAFE_ADDRESS}`,
   });
-  const isValidTx = await protocolKit.isValidTransaction(tx);
+  
+  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
+  
+  const isValidTx = await protocolKit.isValidTransaction(safeTransaction);
   if (!isValidTx)
     throw Error(
-      `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify that on the webapp.`
-    );
+  `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify.`
+);
+  console.debug("Transaction is valid")
 
-  const executeTxResponse = await protocolKit.executeTransaction(tx);
+  // for some reasons, off-chain approval/signature did not work 🤷‍♂️
+  // const signedSafeTransaction = await protocolKit.signTransaction(safeTransaction)
+  // approve transaction
+  const approveTxResponse = await protocolKit.approveTransactionHash(safeTxHash)
+  await approveTxResponse.transactionResponse?.wait()
+
+  console.debug("Signed transaction", safeTxHash)
+
+  const treshold = await protocolKit.getThreshold()
+  const numberOfApprovers = (await protocolKit.getOwnersWhoApprovedTx(safeTxHash)).length
+
+  if (numberOfApprovers < treshold) {
+    throw Error(
+      `Approval threshold is ${treshold}, and only ${numberOfApprovers} have been made, transaction ${safeTxHash} cannot be executed`
+    );
+  }
+
+  console.debug("Approval treshold reached, executing transaction")
+  const executeTxResponse = await protocolKit.executeTransaction(safeTransaction);
   const receipt =
     executeTxResponse.transactionResponse &&
     (await executeTxResponse.transactionResponse.wait());
+  console.log("Transaction executed", receipt?.hash)
   return receipt?.hash;
 }
