@@ -99,7 +99,7 @@ etherfi
     });
 
 
-    for (let fourtyKeyshares of [...chunks(keyshares, 2)]) {
+    for (let fourtyKeyshares of [...chunks(keyshares, 40)]) {
       let bulkRegistrationTxData
       try {
         // build tx
