@@ -242,17 +242,9 @@ async function getClusterSnapshot(
     });
     if (response.status !== 200) throw Error("Request did not return OK");
 
-    if (!response.data.data.cluster) {
-        clusterSnapshot = {
-        validatorCount: 0,
-        networkFeeIndex: 0,
-        index: 0,
-        active: true,
-        balance: 0
-      }
-    } else {
+    if (response.data.data.cluster)
       clusterSnapshot = response.data.data.cluster
-    }
+
     console.debug(`Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
   )
   } catch (err) {
