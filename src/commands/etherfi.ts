@@ -1,27 +1,26 @@
 import { Command } from "commander";
 import {
   spinnerError,
-  spinnerInfo,
   spinnerSuccess,
   stopSpinner,
   updateSpinnerText,
 } from "../spinner";
 import figlet from "figlet";
 import axios from "axios";
-import { EthersAdapter } from "@safe-global/protocol-kit";
-import Safe from "@safe-global/protocol-kit";
 import {
   MetaTransactionData,
   OperationType,
+  SafeTransaction
 } from "@safe-global/safe-core-sdk-types";
 
-import { ethers } from "ethers";
-
 import { readFileSync } from "fs";
+import { glob } from "glob";
 
 import SSVContract from "../../abi/SSVNetwork.json";
-import SafeApiKit, { SafeApiKitConfig } from "@safe-global/api-kit";
-import { glob } from "glob";
+
+import { ethers } from "ethers";
+import { EthersAdapter } from "@safe-global/protocol-kit";
+import Safe from "@safe-global/protocol-kit";
 
 export const etherfi = new Command("etherfi");
 
@@ -75,7 +74,7 @@ etherfi
   )
   .action(async (directory, options) => {
     console.info(figlet.textSync("SSV <> EtherFi"));
-    console.info("Automating registration with multi-sig");
+    console.info("Automating registration of multiple validators for a Safe multisig wallet.");
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
@@ -99,6 +98,7 @@ etherfi
       signerOrProvider: signer,
     });
 
+
     for (let fourtyKeyshares of [...chunks(keyshares, 40)]) {
       let bulkRegistrationTxData
       try {
@@ -108,6 +108,7 @@ etherfi
           process.env.SAFE_ADDRESS,
           signer
         );
+
       } catch (error) {
         spinnerError();
         stopSpinner();
@@ -124,12 +125,13 @@ etherfi
       
       try {
         // create multi sig tx
-        let multiSigTxHash = await createMultiSigTx(
+        let multiSigTransaction = await createApprovedMultiSigTx(
           ethAdapter,
           bulkRegistrationTxData
         );
+        console.info("Created multi-sig transaction.")
         // verify status
-        await checkAndExecuteSignatures(ethAdapter, multiSigTxHash);
+        await checkAndExecuteSignatures(ethAdapter, multiSigTransaction);
       }
       catch (error) {
         spinnerError();
@@ -148,18 +150,18 @@ etherfi
 
     spinnerSuccess();
     // increment nonce
-    nonce += keyshares.length;
+    nonce = nonce + keyshares.length;
     updateSpinnerText(`Next user nonce is ${nonce}`);
     spinnerSuccess();
 
     console.log(`Encountered ${problems.size} problem(s)\n`);
 
     for (let problem of problems) {
-      console.error(`Encountered issue with files ${problem[0]}`);
+      console.error(`Encountered issue when processing keystore file: ${problem[0]}`);
       console.error(problem[1]);
     }
 
-    console.log(`Done. Next user nonce is ${nonce}`);
+    console.log(`Done. Exiting script.`);
     spinnerSuccess();
   });
 
@@ -174,7 +176,7 @@ async function getOwnerNonceFromSubgraph(owner: string): Promise<number> {
       method: "POST",
       url:
         process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-ethereum/version/latest",
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
       headers: {
         "content-type": "application/json",
       },
@@ -193,8 +195,8 @@ async function getOwnerNonceFromSubgraph(owner: string): Promise<number> {
 
     let ownerObj = response.data.data.account;
 
-    console.debug(`Owner nonce:\n\n${ownerObj.nonce}`);
-    nonce = ownerObj.nonce;
+    console.debug(`Owner nonce: ${ownerObj.nonce}`);
+    nonce = Number(ownerObj.nonce);
   } catch (err) {
     console.error("ERROR DURING AXIOS REQUEST", err);
   } finally {
@@ -210,7 +212,7 @@ async function getClusterSnapshot(
     validatorCount: 0,
     networkFeeIndex: 0,
     index: 0,
-    active: false,
+    active: true,
     balance: 0,
   };
   try {
@@ -218,7 +220,7 @@ async function getClusterSnapshot(
       method: "POST",
       url:
         process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-ethereum/version/latest",
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
       headers: {
         "content-type": "application/json",
       },
@@ -239,12 +241,12 @@ async function getClusterSnapshot(
       },
     });
     if (response.status !== 200) throw Error("Request did not return OK");
-    if (!response.data.data.cluster) throw Error("Response is empty");
 
-    let clusterObj = response.data.data.cluster;
+    if (response.data.data.cluster)
+      clusterSnapshot = response.data.data.cluster
 
-    console.debug(`Cluster Snapshot:\n\n${clusterObj.validatorCount}`);
-    clusterSnapshot = clusterObj;
+    console.debug(`Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
+  )
   } catch (err) {
     console.error("ERROR DURING AXIOS REQUEST", err);
   } finally {
@@ -260,7 +262,7 @@ async function getKeyshareObjects(
     nodir: true,
   });
   console.info(
-    `Found ${keyshareFilesPathList.length} keyshares files in the provided folder`
+    `Found ${keyshareFilesPathList.length} keyshares files in ${dir} folder`
   );
   let validatorsCount = clusterValidators;
   let keysharesObjectsList: Array<ShareObject> = []
@@ -293,29 +295,33 @@ async function getKeyshareObjects(
 }
 
 async function getBulkRegistrationTxData(
-  sharesDataArray: ShareObject[],
+  sharesDataObjectArray: ShareObject[],
   owner: string,
   signer: ethers.Wallet
 ) {
-  /* next, create the item */
+
   let contract = new ethers.Contract(
     process.env.SSV_CONTRACT || "",
     SSVContract,
     signer
   );
 
-  let pubkeys = sharesDataArray.map((sharesData) => {
-    sharesData.payload.publicKey;
+  let pubkeys = sharesDataObjectArray.map((keyshareFile) => {
+    return keyshareFile.payload.publicKey;
   });
-  let operatorIds = sharesDataArray[0].payload.operatorIds;
+
+  let sharesData = sharesDataObjectArray.map((keyshareFile) => {
+    return keyshareFile.payload.sharesData;
+  });
+
+  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
   let amount = ethers.parseEther("10");
   const clusterSnapshot = await getClusterSnapshot(owner, operatorIds);
 
-  // This needs approval for spending SSV token
-  let transaction = await contract.bulkRegisterValidator(
+  let transaction = await contract.bulkRegisterValidator.populateTransaction(
     pubkeys,
     operatorIds,
-    sharesDataArray,
+    sharesData,
     amount,
     clusterSnapshot,
     {
@@ -323,26 +329,22 @@ async function getBulkRegistrationTxData(
     }
   );
 
-  // let res = await transaction.wait();
-  console.debug(`Transaction data: `, transaction.data);
   return transaction.data;
 }
 
-async function createMultiSigTx(
+async function createApprovedMultiSigTx(
   ethAdapter: EthersAdapter,
   transaction_data: string
 ) {
-  const safeService = new SafeApiKit({
-    // chainId: 17000n, // Holesky
-    chainId: 1n, // Mainnet
-  });
+
 
   // Create Safe instance
-  const protocolKit = await Safe.create({
+  let protocolKit = await Safe.create({
     ethAdapter,
     safeAddress: `${process.env.SAFE_ADDRESS}`,
-  });
 
+  });
+  
   // Create transaction
   const safeTransactionData: MetaTransactionData = {
     to: `${process.env.SSV_CONTRACT}`,
@@ -351,71 +353,54 @@ async function createMultiSigTx(
     operation: OperationType.Call,
   };
 
-  const safeTransaction = await protocolKit.createTransaction({
+  return await protocolKit.createTransaction({
     transactions: [safeTransactionData],
   });
-
-  const senderAddress = await ethAdapter.getSigner()?.getAddress();
-  if (!senderAddress) {
-    console.error("No Ethereum signer provided");
-    throw Error("No Ethereum signer provided");
-  }
-  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
-  const signature = await protocolKit.signHash(safeTxHash);
-
-  // Propose transaction to the service
-  await safeService.proposeTransaction({
-    safeAddress: await protocolKit.getAddress(),
-    safeTransactionData: safeTransaction.data,
-    safeTxHash,
-    senderAddress,
-    senderSignature: signature.data,
-  });
-
-  return safeTxHash;
 }
 
 async function checkAndExecuteSignatures(
   ethAdapter: EthersAdapter,
-  safeTxHash: string
+  safeTransaction: SafeTransaction
 ) {
-  let apiConfObj: SafeApiKitConfig = {
-    // if the set network is holesky, use its chain ID, otherwise, if mainnet, use its chain ID. Defaults to mainnet
-    chainId: process.env.NETWORK == "holesky" ? 1700n : process.env.NETWORK == "mainnet" ? 1n : 1n
-  }
-  // if the configuration provides a transaction service, set it
-  if (process.env.TX_SERVICE && process.env.TX_SERVICE !== "") apiConfObj.txServiceUrl = process.env.TX_SERVICE
 
-  const safeService = new SafeApiKit(apiConfObj);
-  const tx = await safeService.getTransaction(safeTxHash);
-
-  const confirmations = await safeService.getTransactionConfirmations(
-    safeTxHash
-  );
-
-  // if signatures >> treshold: execute
-  // else: sign
-  if (confirmations.count < tx.confirmationsRequired) {
-    // complain
-    throw Error(
-      `Transaction threshold is ${tx.confirmationsRequired}, and ${confirmations.count} have been made`
-    );
-  }
-
-  // // Create Safe instance
+  // Create Safe instance
   const protocolKit = await Safe.create({
     ethAdapter,
     safeAddress: `${process.env.SAFE_ADDRESS}`,
   });
-  const isValidTx = await protocolKit.isValidTransaction(tx);
+
+  console.debug("Validating transaction...")
+  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
+  const isValidTx = await protocolKit.isValidTransaction(safeTransaction);
   if (!isValidTx)
     throw Error(
-      `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify that on the webapp.`
+      `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify.`
     );
 
-  const executeTxResponse = await protocolKit.executeTransaction(tx);
+  console.debug("Transaction is valid.")
+  console.debug("Signing transaction...")
+  const approveTxResponse = await protocolKit.approveTransactionHash(safeTxHash)
+  await approveTxResponse.transactionResponse?.wait()
+  console.debug("Transaction signed.")
+
+  const threshold = await protocolKit.getThreshold()
+  const numberOfApprovers = (await protocolKit.getOwnersWhoApprovedTx(safeTxHash)).length
+
+  if (numberOfApprovers < threshold) {
+    throw Error(
+      `Approval threshold is ${threshold}, and only ${numberOfApprovers} have been made, transaction ${safeTxHash} cannot be executed.`
+    );
+  }
+
+  console.debug("Approval threshold reached, executing transaction...")
+  const executeTxResponse = await protocolKit.executeTransaction(safeTransaction);
   const receipt =
     executeTxResponse.transactionResponse &&
     (await executeTxResponse.transactionResponse.wait());
+
+  if(Number(await protocolKit.getChainId()) === 1)
+    console.log("Transaction executed: https://etherscan.io/tx/" + receipt?.hash)
+  else
+    console.log("Transaction executed: https://holesky.etherscan.io/tx/" + receipt?.hash)
   return receipt?.hash;
 }
