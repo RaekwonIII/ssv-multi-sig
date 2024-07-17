@@ -22,6 +22,9 @@ import { ethers } from "ethers";
 import { EthersAdapter } from "@safe-global/protocol-kit";
 import Safe from "@safe-global/protocol-kit";
 
+import { KeySharesItem } from "ssv-keys"
+import bls from 'bls-eth-wasm';
+
 export const etherfi = new Command("etherfi");
 
 type ClusterSnapshot = {
@@ -98,8 +101,27 @@ etherfi
       signerOrProvider: signer,
     });
 
-
+    let verificationNonce = nonce
     for (let fourtyKeyshares of [...chunks(keyshares, 40)]) {
+      try {
+        // test keyshares validity
+        areKeysharesValid(fourtyKeyshares, verificationNonce, process.env.SAFE_ADDRESS)
+        // update the nonce for validity checks to include the 40 keys already processed
+        verificationNonce = verificationNonce + fourtyKeyshares.length;
+      } catch (error) {
+        spinnerError();
+        stopSpinner();
+        let keyshareFilesWithIssues = Array.from(new Set(fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)))
+        for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
+          console.error(`Keyshares verification failed for file ${keyshareFileWithIssues}`)
+          problems.set(
+            keyshareFileWithIssues,
+            `Keyshares verification failed for file ${keyshareFileWithIssues}:\n${error}`
+          );
+        }
+        continue;
+      }
+
       let bulkRegistrationTxData
       try {
         // build tx
@@ -294,6 +316,39 @@ async function getKeyshareObjects(
   return keysharesObjectsList;
 }
 
+async function areKeysharesValid(keysharesObjArray:ShareObject[], ownerNonce: number, owner: string) {
+
+  let k = new KeySharesItem();
+  for (let keysharesObj of keysharesObjArray) {
+    let pubkey = keysharesObj.payload.publicKey
+    let sharesData = keysharesObj.payload.sharesData
+    let fromSignatureData = {
+      ownerNonce, // update this.
+      publicKey: pubkey,
+      ownerAddress: owner,
+    };
+
+    const shares: {sharesPublicKeys: string[], encryptedKeys: string[] }  = k.buildSharesFromBytes(sharesData, keysharesObj.payload.operatorIds.length);
+    const { sharesPublicKeys, encryptedKeys } = shares;
+    await k.validateSingleShares(sharesData, fromSignatureData);
+    
+    const cantDeserializeSharePublicKeys = [];
+    for (const sharesPublicKey of sharesPublicKeys) {
+      try {
+        bls.deserializeHexStrToPublicKey(sharesPublicKey.replace('0x', ''));
+      } catch (e) {
+        cantDeserializeSharePublicKeys.push(sharesPublicKey);
+      }
+    }
+    if (cantDeserializeSharePublicKeys.length || !sharesPublicKeys.length) {
+      throw new Error(JSON.stringify(cantDeserializeSharePublicKeys));
+    }
+    bls.deserializeHexStrToPublicKey(pubkey.replace('0x', ''));
+
+    ownerNonce += 1;
+  }
+}
+
 async function getBulkRegistrationTxData(
   sharesDataObjectArray: ShareObject[],
   owner: string,
@@ -306,18 +361,18 @@ async function getBulkRegistrationTxData(
     signer
   );
 
-  let pubkeys = sharesDataObjectArray.map((keyshareFile) => {
-    return keyshareFile.payload.publicKey;
+  let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
+    return keyshareObj.payload.publicKey;
   });
-
-  let sharesData = sharesDataObjectArray.map((keyshareFile) => {
-    return keyshareFile.payload.sharesData;
+  
+  let sharesData = sharesDataObjectArray.map((keyshareObj) => {
+    return keyshareObj.payload.sharesData;
   });
-
+  
   let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
   let amount = ethers.parseEther("10");
   const clusterSnapshot = await getClusterSnapshot(owner, operatorIds);
-
+  
   let transaction = await contract.bulkRegisterValidator.populateTransaction(
     pubkeys,
     operatorIds,
