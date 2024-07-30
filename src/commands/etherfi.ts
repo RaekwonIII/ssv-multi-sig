@@ -10,7 +10,7 @@ import axios from "axios";
 import {
   MetaTransactionData,
   OperationType,
-  SafeTransaction
+  SafeTransaction,
 } from "@safe-global/safe-core-sdk-types";
 
 import { readFileSync } from "fs";
@@ -21,11 +21,20 @@ import SSVContract from "../../abi/SSVNetwork.json";
 import { ethers } from "ethers";
 import { EthersAdapter } from "@safe-global/protocol-kit";
 import Safe from "@safe-global/protocol-kit";
-
-import { KeySharesItem } from "ssv-keys"
-import bls from 'bls-eth-wasm';
+import Web3 from "web3";
+import * as ethUtil from "ethereumjs-util";
+import bls from "bls-eth-wasm";
 
 export const etherfi = new Command("etherfi");
+
+const SIGNATURE_LENGHT = 192;
+const PUBLIC_KEY_LENGHT = 96;
+
+export interface IKeySharesFromSignatureData {
+  ownerAddress: string;
+  ownerNonce: number;
+  publicKey: string;
+}
 
 type ClusterSnapshot = {
   validatorCount: number;
@@ -72,12 +81,14 @@ etherfi
   )
   .option(
     "-o, --operators <operators>",
-    "Comma separated list of ids of operators to test",
+    "Comma separated list of ids of operators to register to",
     commaSeparatedList
   )
   .action(async (directory, options) => {
     console.info(figlet.textSync("SSV <> EtherFi"));
-    console.info("Automating registration of multiple validators for a Safe multisig wallet.");
+    console.info(
+      "Automating registration of multiple validators for a Safe multisig wallet."
+    );
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
@@ -101,18 +112,23 @@ etherfi
     });
 
     for (let fourtyKeyshares of [...chunks(keyshares, 40)]) {
-
-    // update nonce
-    let nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
+      // update nonce
+      let nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
       try {
         // test keyshares validity
-        areKeysharesValid(fourtyKeyshares, nonce, process.env.SAFE_ADDRESS)
+        areKeysharesValid(fourtyKeyshares, nonce, process.env.SAFE_ADDRESS);
       } catch (error) {
         spinnerError();
         stopSpinner();
-        let keyshareFilesWithIssues = Array.from(new Set(fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)))
+        let keyshareFilesWithIssues = Array.from(
+          new Set(
+            fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)
+          )
+        );
         for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
-          console.error(`Keyshares verification failed for file ${keyshareFileWithIssues}`)
+          console.error(
+            `Keyshares verification failed for file ${keyshareFileWithIssues}`
+          );
           problems.set(
             keyshareFileWithIssues,
             `Keyshares verification failed for file ${keyshareFileWithIssues}:\n${error}`
@@ -121,7 +137,7 @@ etherfi
         continue;
       }
 
-      let bulkRegistrationTxData
+      let bulkRegistrationTxData;
       try {
         // build tx
         bulkRegistrationTxData = await getBulkRegistrationTxData(
@@ -129,13 +145,18 @@ etherfi
           process.env.SAFE_ADDRESS,
           signer
         );
-
       } catch (error) {
         spinnerError();
         stopSpinner();
-        let keyshareFilesWithIssues = Array.from(new Set(fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)))
+        let keyshareFilesWithIssues = Array.from(
+          new Set(
+            fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)
+          )
+        );
         for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
-          console.error(`Bulk Registration TX failed for file ${keyshareFileWithIssues}`)
+          console.error(
+            `Bulk Registration TX failed for file ${keyshareFileWithIssues}`
+          );
           problems.set(
             keyshareFileWithIssues,
             `Bulk Registration TX failed for file ${keyshareFileWithIssues}:\n${error}`
@@ -143,23 +164,28 @@ etherfi
         }
         continue;
       }
-      
+
       try {
         // create multi sig tx
         let multiSigTransaction = await createApprovedMultiSigTx(
           ethAdapter,
           bulkRegistrationTxData
         );
-        console.info("Created multi-sig transaction.")
+        console.info("Created multi-sig transaction.");
         // verify status
         await checkAndExecuteSignatures(ethAdapter, multiSigTransaction);
-      }
-      catch (error) {
+      } catch (error) {
         spinnerError();
         stopSpinner();
-        let keyshareFilesWithIssues = Array.from(new Set(fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)))
+        let keyshareFilesWithIssues = Array.from(
+          new Set(
+            fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)
+          )
+        );
         for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
-          console.error(`Multi-sig TX failed for file ${keyshareFileWithIssues}`)
+          console.error(
+            `Multi-sig TX failed for file ${keyshareFileWithIssues}`
+          );
           problems.set(
             keyshareFileWithIssues,
             `Multi-sig TX failed for file ${keyshareFileWithIssues}:\n${error}`
@@ -176,7 +202,9 @@ etherfi
     console.log(`Encountered ${problems.size} problem(s)\n`);
 
     for (let problem of problems) {
-      console.error(`Encountered issue when processing keystore file: ${problem[0]}`);
+      console.error(
+        `Encountered issue when processing keystore file: ${problem[0]}`
+      );
       console.error(problem[1]);
     }
 
@@ -201,12 +229,12 @@ async function getOwnerNonceFromSubgraph(owner: string): Promise<number> {
       },
       data: {
         query: `
-            query accountNonce($owner: String!) {
-                account(id: $owner) {
-                    nonce
-                }
-            }`,
-        variables: { owner: owner.toLowerCase() },
+          query accountNonce($owner: ID!) {
+            account(id: $owner) {
+                nonce
+            }
+        }`,
+        variables: { owner: owner },
       },
     });
     if (response.status !== 200) throw Error("Request did not return OK");
@@ -245,27 +273,32 @@ async function getClusterSnapshot(
       },
       data: {
         query: `
-            query clusterSnapshot($cluster: String!) {
-              cluster(id: $cluster) {
+            query clusterSnapshot($owner: ID!, $operatorIds: [BigInt!]!) {
+              clusters(
+                where: {owner_: {id: $owner}, operatorIds: $operatorIds}
+              ) {
                 validatorCount
                 networkFeeIndex
                 index
                 active
                 balance
               }
-            }`,
+            }
+            `,
         variables: {
-          cluster: `${owner.toLowerCase()}-${operatorIDs.join("-")}`,
+          owner: owner,
+          operatorIds: operatorIDs
         },
       },
     });
     if (response.status !== 200) throw Error("Request did not return OK");
 
     if (response.data.data.cluster)
-      clusterSnapshot = response.data.data.cluster
+      clusterSnapshot = response.data.data.cluster;
 
-    console.debug(`Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
-  )
+    console.debug(
+      `Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
+    );
   } catch (err) {
     console.error("ERROR DURING AXIOS REQUEST", err);
   } finally {
@@ -284,55 +317,143 @@ async function getKeyshareObjects(
     `Found ${keyshareFilesPathList.length} keyshares files in ${dir} folder`
   );
   let validatorsCount = clusterValidators;
-  let keysharesObjectsList: Array<ShareObject> = []
+  let keysharesObjectsList: Array<ShareObject> = [];
   keyshareFilesPathList.map((keyshareFilePath) => {
-    let shares : ShareObject[] = JSON.parse(readFileSync(keyshareFilePath, "utf-8")).shares;
+    let shares: ShareObject[] = JSON.parse(
+      readFileSync(keyshareFilePath, "utf-8")
+    ).shares;
     // Enrich the shares object with the keyshares file it was found in
     let enrichedShares = shares.map((share) => {
-      share.keySharesFilePath = keyshareFilePath
+      share.keySharesFilePath = keyshareFilePath;
       return share;
     });
-    keysharesObjectsList.push(...enrichedShares)
-  })
+    keysharesObjectsList.push(...enrichedShares);
+  });
 
   // order by nonce
-  keysharesObjectsList.sort((a, b) => a.data.ownerNonce - b.data.ownerNonce)
-  
+  keysharesObjectsList.sort((a, b) => a.data.ownerNonce - b.data.ownerNonce);
+
   if (validatorsCount + keysharesObjectsList.length > 500) {
     // identify the item in the list that's going to be the last one
-    let lastKeysharesIndex = 500 - validatorsCount
-    let lastKeyshareObj = keysharesObjectsList.at(lastKeysharesIndex)
+    let lastKeysharesIndex = 500 - validatorsCount;
+    let lastKeyshareObj = keysharesObjectsList.at(lastKeysharesIndex);
     console.error(
       `Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators. 
       Going to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`
     );
     // splice the array, effectively reducing it to the correct number
-    keysharesObjectsList.splice(lastKeysharesIndex)
+    keysharesObjectsList.splice(lastKeysharesIndex);
   }
 
   return keysharesObjectsList;
 }
 
-async function areKeysharesValid(keysharesObjArray:ShareObject[], ownerNonce: number, owner: string) {
+async function validateSingleShares(
+  shares: string,
+  fromSignatureData: IKeySharesFromSignatureData
+): Promise<void> {
+  const { ownerAddress, ownerNonce, publicKey } = fromSignatureData;
 
-  let keySharesItemSDK = new KeySharesItem();
+  if (!Number.isInteger(ownerNonce) || ownerNonce < 0) {
+    throw new Error(`Owner nonce is not positive integer ${ownerNonce}`);
+  }
+  const web3 = new Web3();
+  const address = web3.utils.toChecksumAddress(ownerAddress);
+  const signaturePt = shares.replace("0x", "").substring(0, SIGNATURE_LENGHT);
+
+  // await web3Helper.validateSignature(`${address}:${ownerNonce}`, `0x${signaturePt}`, publicKey);
+
+  if (!bls.deserializeHexStrToSecretKey) {
+    await bls.init(bls.BLS12_381);
+  }
+
+  const blsPublicKey = bls.deserializeHexStrToPublicKey(
+    publicKey.replace("0x", "")
+  );
+  const signature = bls.deserializeHexStrToSignature(
+    `0x${signaturePt}`.replace("0x", "")
+  );
+
+  const messageHash = ethUtil.keccak256(
+    Buffer.from(`${address}:${ownerNonce}`)
+  );
+
+  if (!blsPublicKey.verify(signature, new Uint8Array(messageHash))) {
+    throw new Error(`Single shares signature is invalid 0x${signaturePt}`);
+  }
+}
+
+function splitArray(parts: number, arr: Uint8Array) {
+  const partLength = Math.floor(arr.length / parts);
+  const partsArr = [];
+  for (let i = 0; i < parts; i++) {
+    const start = i * partLength;
+    const end = start + partLength;
+    partsArr.push(arr.slice(start, end));
+  }
+  return partsArr;
+}
+
+/**
+ * Build shares from bytes string and operators list length
+ * @param bytes
+ * @param operatorCount
+ */
+function buildSharesFromBytes(bytes: string, operatorCount: number): any {
+  // Validate the byte string format (hex string starting with '0x')
+  if (!bytes.startsWith("0x") || !/^(0x)?[0-9a-fA-F]*$/.test(bytes)) {
+    throw new Error("Invalid byte string format");
+  }
+
+  // Validate the operator count (positive integer)
+  if (operatorCount <= 0 || !Number.isInteger(operatorCount)) {
+    throw new Error("Invalid operator count");
+  }
+
+  const sharesPt = bytes.replace("0x", "").substring(SIGNATURE_LENGHT);
+
+  const pkSplit = sharesPt.substring(0, operatorCount * PUBLIC_KEY_LENGHT);
+  const pkArray = ethers.getBytes("0x" + pkSplit);
+  const sharesPublicKeys = splitArray(operatorCount, pkArray).map((item) =>
+    ethers.toBeHex(item.toString())
+  );
+
+  const eSplit = bytes.substring(operatorCount * PUBLIC_KEY_LENGHT);
+  const eArray = ethers.getBytes("0x" + eSplit);
+  const encryptedKeys = splitArray(operatorCount, eArray).map((item) =>
+    Buffer.from(
+      ethers.toBeHex(item.toString()).replace("0x", ""),
+      "hex"
+    ).toString("base64")
+  );
+
+  return { sharesPublicKeys, encryptedKeys };
+}
+
+async function areKeysharesValid(
+  keysharesObjArray: ShareObject[],
+  ownerNonce: number,
+  owner: string
+) {
+  // let keySharesItemSDK = new KeySharesItem();
   for (let keysharesObj of keysharesObjArray) {
-    let pubkey = keysharesObj.payload.publicKey
-    let sharesData = keysharesObj.payload.sharesData
+    let pubkey = keysharesObj.payload.publicKey;
+    let sharesData = keysharesObj.payload.sharesData;
     let fromSignatureData = {
       ownerNonce,
       publicKey: pubkey,
       ownerAddress: owner,
     };
 
-    const shares: {sharesPublicKeys: string[], encryptedKeys: string[] }  = keySharesItemSDK.buildSharesFromBytes(sharesData, keysharesObj.payload.operatorIds.length);
+    const shares: { sharesPublicKeys: string[]; encryptedKeys: string[] } =
+      buildSharesFromBytes(sharesData, keysharesObj.payload.operatorIds.length);
     const { sharesPublicKeys, encryptedKeys } = shares;
-    await keySharesItemSDK.validateSingleShares(sharesData, fromSignatureData);
-    
+    await validateSingleShares(sharesData, fromSignatureData);
+
     const cantDeserializeSharePublicKeys = [];
     for (const sharesPublicKey of sharesPublicKeys) {
       try {
-        bls.deserializeHexStrToPublicKey(sharesPublicKey.replace('0x', ''));
+        bls.deserializeHexStrToPublicKey(sharesPublicKey.replace("0x", ""));
       } catch (e) {
         cantDeserializeSharePublicKeys.push(sharesPublicKey);
       }
@@ -340,7 +461,7 @@ async function areKeysharesValid(keysharesObjArray:ShareObject[], ownerNonce: nu
     if (cantDeserializeSharePublicKeys.length || !sharesPublicKeys.length) {
       throw new Error(JSON.stringify(cantDeserializeSharePublicKeys));
     }
-    bls.deserializeHexStrToPublicKey(pubkey.replace('0x', ''));
+    bls.deserializeHexStrToPublicKey(pubkey.replace("0x", ""));
 
     ownerNonce += 1;
   }
@@ -351,7 +472,6 @@ async function getBulkRegistrationTxData(
   owner: string,
   signer: ethers.Wallet
 ) {
-
   let contract = new ethers.Contract(
     process.env.SSV_CONTRACT || "",
     SSVContract,
@@ -361,15 +481,15 @@ async function getBulkRegistrationTxData(
   let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
     return keyshareObj.payload.publicKey;
   });
-  
+
   let sharesData = sharesDataObjectArray.map((keyshareObj) => {
     return keyshareObj.payload.sharesData;
   });
-  
+
   let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
   let amount = ethers.parseEther("10");
   const clusterSnapshot = await getClusterSnapshot(owner, operatorIds);
-  
+
   let transaction = await contract.bulkRegisterValidator.populateTransaction(
     pubkeys,
     operatorIds,
@@ -388,15 +508,12 @@ async function createApprovedMultiSigTx(
   ethAdapter: EthersAdapter,
   transaction_data: string
 ) {
-
-
   // Create Safe instance
   let protocolKit = await Safe.create({
     ethAdapter,
     safeAddress: `${process.env.SAFE_ADDRESS}`,
-
   });
-  
+
   // Create transaction
   const safeTransactionData: MetaTransactionData = {
     to: `${process.env.SSV_CONTRACT}`,
@@ -414,29 +531,32 @@ async function checkAndExecuteSignatures(
   ethAdapter: EthersAdapter,
   safeTransaction: SafeTransaction
 ) {
-
   // Create Safe instance
   const protocolKit = await Safe.create({
     ethAdapter,
     safeAddress: `${process.env.SAFE_ADDRESS}`,
   });
 
-  console.debug("Validating transaction...")
-  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
+  console.debug("Validating transaction...");
+  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
   const isValidTx = await protocolKit.isValidTransaction(safeTransaction);
   if (!isValidTx)
     throw Error(
       `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify.`
     );
 
-  console.debug("Transaction is valid.")
-  console.debug("Signing transaction...")
-  const approveTxResponse = await protocolKit.approveTransactionHash(safeTxHash)
-  await approveTxResponse.transactionResponse?.wait()
-  console.debug("Transaction signed.")
+  console.debug("Transaction is valid.");
+  console.debug("Signing transaction...");
+  const approveTxResponse = await protocolKit.approveTransactionHash(
+    safeTxHash
+  );
+  await approveTxResponse.transactionResponse?.wait();
+  console.debug("Transaction signed.");
 
-  const threshold = await protocolKit.getThreshold()
-  const numberOfApprovers = (await protocolKit.getOwnersWhoApprovedTx(safeTxHash)).length
+  const threshold = await protocolKit.getThreshold();
+  const numberOfApprovers = (
+    await protocolKit.getOwnersWhoApprovedTx(safeTxHash)
+  ).length;
 
   if (numberOfApprovers < threshold) {
     throw Error(
@@ -444,15 +564,21 @@ async function checkAndExecuteSignatures(
     );
   }
 
-  console.debug("Approval threshold reached, executing transaction...")
-  const executeTxResponse = await protocolKit.executeTransaction(safeTransaction);
+  console.debug("Approval threshold reached, executing transaction...");
+  const executeTxResponse = await protocolKit.executeTransaction(
+    safeTransaction
+  );
   const receipt =
     executeTxResponse.transactionResponse &&
     (await executeTxResponse.transactionResponse.wait());
 
-  if(Number(await protocolKit.getChainId()) === 1)
-    console.log("Transaction executed: https://etherscan.io/tx/" + receipt?.hash)
+  if (Number(await protocolKit.getChainId()) === 1)
+    console.log(
+      "Transaction executed: https://etherscan.io/tx/" + receipt?.hash
+    );
   else
-    console.log("Transaction executed: https://holesky.etherscan.io/tx/" + receipt?.hash)
+    console.log(
+      "Transaction executed: https://holesky.etherscan.io/tx/" + receipt?.hash
+    );
   return receipt?.hash;
 }
