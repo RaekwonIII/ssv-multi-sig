@@ -86,7 +86,6 @@ etherfi
       process.env.SAFE_ADDRESS,
       options.operators.map((operator: string) => Number(operator))
     );
-    let nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
     let problems = new Map();
 
     let keyshares = await getKeyshareObjects(
@@ -101,13 +100,13 @@ etherfi
       signerOrProvider: signer,
     });
 
-    let verificationNonce = nonce
     for (let fourtyKeyshares of [...chunks(keyshares, 40)]) {
+
+    // update nonce
+    let nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
       try {
         // test keyshares validity
-        areKeysharesValid(fourtyKeyshares, verificationNonce, process.env.SAFE_ADDRESS)
-        // update the nonce for validity checks to include the 40 keys already processed
-        verificationNonce = verificationNonce + fourtyKeyshares.length;
+        areKeysharesValid(fourtyKeyshares, nonce, process.env.SAFE_ADDRESS)
       } catch (error) {
         spinnerError();
         stopSpinner();
@@ -168,12 +167,10 @@ etherfi
         }
         continue;
       }
-    }
 
-    spinnerSuccess();
-    // increment nonce
-    nonce = nonce + keyshares.length;
-    updateSpinnerText(`Next user nonce is ${nonce}`);
+      spinnerSuccess();
+      updateSpinnerText(`Next user nonce is ${nonce + keyshares.length}`);
+    }
     spinnerSuccess();
 
     console.log(`Encountered ${problems.size} problem(s)\n`);
@@ -318,19 +315,19 @@ async function getKeyshareObjects(
 
 async function areKeysharesValid(keysharesObjArray:ShareObject[], ownerNonce: number, owner: string) {
 
-  let k = new KeySharesItem();
+  let keySharesItemSDK = new KeySharesItem();
   for (let keysharesObj of keysharesObjArray) {
     let pubkey = keysharesObj.payload.publicKey
     let sharesData = keysharesObj.payload.sharesData
     let fromSignatureData = {
-      ownerNonce, // update this.
+      ownerNonce,
       publicKey: pubkey,
       ownerAddress: owner,
     };
 
-    const shares: {sharesPublicKeys: string[], encryptedKeys: string[] }  = k.buildSharesFromBytes(sharesData, keysharesObj.payload.operatorIds.length);
+    const shares: {sharesPublicKeys: string[], encryptedKeys: string[] }  = keySharesItemSDK.buildSharesFromBytes(sharesData, keysharesObj.payload.operatorIds.length);
     const { sharesPublicKeys, encryptedKeys } = shares;
-    await k.validateSingleShares(sharesData, fromSignatureData);
+    await keySharesItemSDK.validateSingleShares(sharesData, fromSignatureData);
     
     const cantDeserializeSharePublicKeys = [];
     for (const sharesPublicKey of sharesPublicKeys) {
