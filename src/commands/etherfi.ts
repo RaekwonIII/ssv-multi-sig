@@ -162,5 +162,6 @@ etherfi
       console.error(`${problem[1]}\n\n`);
     }
 
-    console.info(`Done. Exiting script.`);
+    spinnerSuccess(`Done. Exiting script.`)
+    stopSpinner()
   });

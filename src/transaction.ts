@@ -97,9 +97,10 @@ export async function checkAndExecuteSignatures(
   console.debug("Validating transaction...");
   const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
   const isValidTx = await protocolKit.isValidTransaction(safeTransaction);
+  
   if (!isValidTx)
     throw Error(
-      `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify.`
+      `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify this transaction data: \n${safeTransaction.data.data}`
     );
 
   console.debug("Transaction is valid.");
