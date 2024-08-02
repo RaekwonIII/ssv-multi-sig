@@ -24,7 +24,8 @@ async function validateSingleShares(
     if (!Number.isInteger(ownerNonce) || ownerNonce < 0) {
       throw new Error(`Owner nonce is not positive integer ${ownerNonce}`);
     }
-    const web3 = new Web3();
+    // const provider = new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT);
+    const web3 = new Web3(process.env.RPC_ENDPOINT);
     const address = web3.utils.toChecksumAddress(ownerAddress);
     const signaturePt = shares.replace("0x", "").substring(0, SIGNATURE_LENGHT);
       

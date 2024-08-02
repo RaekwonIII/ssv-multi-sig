@@ -50,6 +50,10 @@ At the end of the process, it reports files that included keyshares with issues 
 The various commands need the following environment variables to be set:
 
 ```sh
+# Number of keyshares to be processed in a single transaction (default value: 40)
+CHUNK_SIZE=
+# The URL of an RPC endpoint. Needed for signing transactions
+RPC_ENDPOINT=
 # private key of an Ethereum wallet. Necessary to sign transactions, and it **must** the the wallet of the `owner`.
 PRIVATE_KEY=
 # e.g. "https://api.studio.thegraph.com/query/53804/ssv-holesky/v0.0.1"

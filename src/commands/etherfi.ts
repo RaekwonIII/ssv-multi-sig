@@ -42,8 +42,7 @@ etherfi
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
-    if (!process.env.CHUNK_SIZE)
-      throw Error("No keyshares chunk size provided");
+    let chunkSize = parseInt(process.env.CHUNK_SIZE || "40")
 
     let clusterSnapshot = await getClusterSnapshot(
       process.env.SAFE_ADDRESS,
@@ -61,18 +60,20 @@ etherfi
     let nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
     let expectedNonce = nonce;
 
-    for (let fourtyKeyshares of [...chunks(keyshares, parseInt(process.env.CHUNK_SIZE))]) {
+    for (let keysharesChunk of [...chunks(keyshares, chunkSize)]) {
       // update nonce
       nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
       console.debug(`Owner nonce: ${nonce}`);
+      // expected to be the same on first loop, but important on following ones
       if (nonce !== expectedNonce) {
         console.error("Nonce has not been updated since last successful transaction!")
         break;
       }
       try {
+        updateSpinnerText("Verifying Keyshares validity")
         // test keyshares validity
-        areKeysharesValid(
-          fourtyKeyshares,
+        await areKeysharesValid(
+          keysharesChunk,
           expectedNonce,
           process.env.SAFE_ADDRESS
         );
@@ -81,13 +82,10 @@ etherfi
         stopSpinner();
         let keyshareFilesWithIssues = Array.from(
           new Set(
-            fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)
+            keysharesChunk.map((keyshares) => keyshares.keySharesFilePath)
           )
         );
         for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
-          console.error(
-            `Keyshares verification failed for file ${keyshareFileWithIssues}`
-          );
           problems.set(
             keyshareFileWithIssues,
             `Keyshares verification failed for file ${keyshareFileWithIssues}:\n${error}`
@@ -95,12 +93,13 @@ etherfi
         }
         break;
       }
+      spinnerSuccess(`All Keyshares valid`)
 
       let bulkRegistrationTxData;
       try {
         // build tx
         bulkRegistrationTxData = await getBulkRegistrationTxData(
-          fourtyKeyshares,
+          keysharesChunk,
           process.env.SAFE_ADDRESS,
           signer
         );
@@ -109,13 +108,10 @@ etherfi
         stopSpinner();
         let keyshareFilesWithIssues = Array.from(
           new Set(
-            fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)
+            keysharesChunk.map((keyshares) => keyshares.keySharesFilePath)
           )
         );
         for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
-          console.error(
-            `Bulk Registration TX failed for file ${keyshareFileWithIssues}`
-          );
           problems.set(
             keyshareFileWithIssues,
             `Bulk Registration TX failed for file ${keyshareFileWithIssues}:\n${error}`
@@ -138,13 +134,10 @@ etherfi
         stopSpinner();
         let keyshareFilesWithIssues = Array.from(
           new Set(
-            fourtyKeyshares.map((keyshares) => keyshares.keySharesFilePath)
+            keysharesChunk.map((keyshares) => keyshares.keySharesFilePath)
           )
         );
         for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
-          console.error(
-            `Multi-sig TX failed for file ${keyshareFileWithIssues}`
-          );
           problems.set(
             keyshareFileWithIssues,
             `Multi-sig TX failed for file ${keyshareFileWithIssues}:\n${error}`
@@ -153,22 +146,21 @@ etherfi
         break;
       }
 
-      spinnerSuccess();
-      updateSpinnerText(`Next user nonce is ${nonce + keyshares.length}`);
+      spinnerSuccess(`Next user nonce is ${nonce + keyshares.length}`);
 
-      expectedNonce = nonce + parseInt(process.env.CHUNK_SIZE);
+      // update expected nonce, if everything went as expected, data source should have exact same increment
+      expectedNonce = nonce + chunkSize;
     }
-    spinnerSuccess();
+    spinnerSuccess(`Finished processing ${keyshares.length} keyshares`);
 
-    console.log(`Encountered ${problems.size} problem(s)\n`);
+    console.info(`Encountered ${problems.size} problem(s)\n`);
 
     for (let problem of problems) {
       console.error(
         `Encountered issue when processing keystore file: ${problem[0]}`
       );
-      console.error(problem[1]);
+      console.error(`${problem[1]}\n\n`);
     }
 
-    console.log(`Done. Exiting script.`);
-    spinnerSuccess();
+    console.info(`Done. Exiting script.`);
   });
