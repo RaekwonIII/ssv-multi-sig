@@ -44,7 +44,7 @@ async function validateSingleShares(
       Buffer.from(`${address}:${ownerNonce}`)
     );
     if (!blsPublicKey.verify(signature, new Uint8Array(messageHash))) {
-      throw new Error(`Single shares signature is invalid 0x${signaturePt}, expected "${address}:${ownerNonce} for pubkey: ${publicKey}"`);
+      throw new Error(`Single shares signature is invalid 0x${signaturePt}, expected address: ${address} and nonce: ${ownerNonce} for pubkey: ${publicKey}"`);
     }
   }
   

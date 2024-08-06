@@ -25,11 +25,9 @@ export async function getOwnerNonceFromSubgraph(
       },
     });
     if (response.status !== 200) throw Error("Request did not return OK");
-    if (!response.data.data.account) throw Error("Response is empty");
+    if (response.data.data.account)
+      nonce = Number(response.data.data.account.nonce);
 
-    let ownerObj = response.data.data.account;
-
-    nonce = Number(ownerObj.nonce);
   } catch (err) {
     console.error("ERROR DURING AXIOS REQUEST", err);
   } finally {
