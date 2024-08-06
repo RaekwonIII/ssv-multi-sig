@@ -79,7 +79,7 @@ export async function getClusterSnapshot(
     });
     if (response.status !== 200) throw Error("Request did not return OK");
 
-    if (response.data.data.clusters)
+    if (response.data.data.clusters && response.data.data.clusters.length > 0)
       clusterSnapshot = response.data.data.clusters[0];
 
     console.debug(
