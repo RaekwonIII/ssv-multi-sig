@@ -53,7 +53,7 @@ export async function getKeyshareObjects(
     nodir: true,
   });
   console.info(
-    `Found ${keyshareFilesPathList.length} keyshares files in ${dir} folder`
+    `\nFound ${keyshareFilesPathList.length} keyshares files in ${dir} folder`
   );
   let validatorsCount = clusterValidators;
   let keysharesObjectsList: Array<ShareObject> = [];
@@ -77,13 +77,12 @@ export async function getKeyshareObjects(
     let lastKeysharesIndex = 500 - validatorsCount;
     let lastKeyshareObj = keysharesObjectsList.at(lastKeysharesIndex);
     console.error(
-      `Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators. 
-        Going to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`
+      `Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators.\n\nGoing to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`
     );
     // splice the array, effectively reducing it to the correct number
     keysharesObjectsList.splice(lastKeysharesIndex);
   }
-  console.info(`Found ${keysharesObjectsList.length} total keyshares`);
+  console.info(`\nFound ${keysharesObjectsList.length} total keyshares`);
 
   return keysharesObjectsList;
 }

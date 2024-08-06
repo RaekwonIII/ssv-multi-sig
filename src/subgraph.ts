@@ -78,10 +78,10 @@ export async function getClusterSnapshot(
       },
     });
     if (response.status !== 200) throw Error("Request did not return OK");
-    
+
     if (response.data.data.clusters)
-        clusterSnapshot = response.data.data.clusters[0];
-    
+      clusterSnapshot = response.data.data.clusters[0];
+
     console.debug(
       `Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
     );
@@ -89,5 +89,39 @@ export async function getClusterSnapshot(
     console.error("ERROR DURING AXIOS REQUEST", err);
   } finally {
     return clusterSnapshot;
+  }
+}
+
+export async function getRegisteredPubkeys(pubkeys: string[]): Promise<string[]> {
+  let registeredPubkeys: string[] = [];
+  try {
+    const response = await axios({
+      method: "POST",
+      url:
+        process.env.SUBGRAPH_API ||
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
+      headers: {
+        "content-type": "application/json",
+      },
+      data: {
+        query: `
+            query getRegisteredPubkeys($pubkeys: [Bytes!]) {
+                validators(where: {id_in: $pubkeys}, first: 1000) {
+                    id
+                }
+            }`,
+        variables: { pubkeys: pubkeys },
+      },
+    });
+    if (response.status !== 200) throw Error("Request did not return OK");
+    if (!response.data.data.validators) throw Error("Response is empty");
+
+    let pubkeysList = response.data.data.validators;
+
+    registeredPubkeys = pubkeysList.map((item: { id: string; }) => item.id)
+  } catch (err) {
+    console.error("ERROR DURING AXIOS REQUEST", err);
+  } finally {
+    return registeredPubkeys;
   }
 }

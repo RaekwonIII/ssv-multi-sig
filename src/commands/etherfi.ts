@@ -13,7 +13,7 @@ import {
   getKeyshareObjects,
 } from "../utils";
 import { areKeysharesValid } from "../ssv-keys";
-import { getClusterSnapshot, getOwnerNonceFromSubgraph } from "../subgraph";
+import { getClusterSnapshot, getOwnerNonceFromSubgraph, getRegisteredPubkeys } from "../subgraph";
 import {
   checkAndExecuteSignatures,
   createApprovedMultiSigTx,
@@ -50,10 +50,20 @@ etherfi
     );
     let problems = new Map();
 
+    updateSpinnerText("Extracting keyshares from files in provided folder")
+
     let keyshares = await getKeyshareObjects(
       directory,
       clusterSnapshot.validatorCount
     );
+
+    // find public keys that were already registered
+    let registeredPubkeys = await getRegisteredPubkeys(keyshares.map((item) => item.data.publicKey))
+
+    updateSpinnerText(`Found ${registeredPubkeys.length} public keys already registered, removing them from the list.`)
+
+    // remove them from the keyshares list
+    keyshares = keyshares.filter((item) => !registeredPubkeys.includes(item.data.publicKey))
 
     const {signer, adapter} = await getSignerandAdapter(process.env.RPC_ENDPOINT, process.env.PRIVATE_KEY) 
     // need to initialize these
