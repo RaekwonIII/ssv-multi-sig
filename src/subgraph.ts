@@ -104,7 +104,7 @@ export async function getRegisteredPubkeys(pubkeys: string[]): Promise<string[]>
       data: {
         query: `
             query getRegisteredPubkeys($pubkeys: [Bytes!]) {
-                validators(where: {id_in: $pubkeys}, first: 1000) {
+                validators(where: {id_in: $pubkeys, active: true}) {
                     id
                 }
             }`,
