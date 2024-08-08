@@ -123,3 +123,38 @@ export async function getRegisteredPubkeys(pubkeys: string[]): Promise<string[]>
     return registeredPubkeys;
   }
 }
+
+export async function getValidatorCountPerOperator(operatorIds:number[]): Promise<{id: number, validatorCount: number}[]> {
+  
+  let validatorCountPerOperator = [];
+  try {
+    const response = await axios({
+      method: "POST",
+      url:
+        process.env.SUBGRAPH_API ||
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
+      headers: {
+        "content-type": "application/json",
+      },
+      data: {
+        query: `
+            query getValidatorCountPerOperator($operatorIds: [BigInt!]) {
+              operators(where: {operatorId_in: $operatorIds}) {
+                id
+                validatorCount
+              }
+            }`,
+        variables: { operatorIds: operatorIds },
+      },
+    });
+    if (response.status !== 200) throw Error("Request did not return OK");
+    if (!response.data.data.operators) throw Error("Response is empty");
+
+    validatorCountPerOperator = response.data.data.operators;
+
+  } catch (err) {
+    console.error("ERROR DURING AXIOS REQUEST", err);
+  } finally {
+    return validatorCountPerOperator;
+  }
+}

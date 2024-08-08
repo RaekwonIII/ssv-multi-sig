@@ -46,8 +46,7 @@ export function commaSeparatedList(
 }
 
 export async function getKeyshareObjects(
-  dir: string,
-  clusterValidators: number
+  dir: string
 ): Promise<Array<ShareObject>> {
   let keyshareFilesPathList = await glob(`${dir}/**/keyshares**.json`, {
     nodir: true,
@@ -55,7 +54,6 @@ export async function getKeyshareObjects(
   console.info(
     `\nFound ${keyshareFilesPathList.length} keyshares files in ${dir} folder`
   );
-  let validatorsCount = clusterValidators;
   let keysharesObjectsList: Array<ShareObject> = [];
   keyshareFilesPathList.map((keyshareFilePath) => {
     let shares: ShareObject[] = JSON.parse(
@@ -68,21 +66,10 @@ export async function getKeyshareObjects(
     });
     keysharesObjectsList.push(...enrichedShares);
   });
-
+  
   // order by nonce
   keysharesObjectsList.sort((a, b) => a.data.ownerNonce - b.data.ownerNonce);
 
-  if (validatorsCount + keysharesObjectsList.length > 500) {
-    // identify the item in the list that's going to be the last one
-    let lastKeysharesIndex = 500 - validatorsCount;
-    let lastKeyshareObj = keysharesObjectsList.at(lastKeysharesIndex);
-    console.error(
-      `Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators.\n\nGoing to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`
-    );
-    // splice the array, effectively reducing it to the correct number
-    keysharesObjectsList.splice(lastKeysharesIndex);
-  }
-  console.info(`\nFound ${keysharesObjectsList.length} total keyshares`);
-
   return keysharesObjectsList;
 }
+

@@ -7,13 +7,14 @@ import {
 } from "../spinner";
 import figlet from "figlet";
 
-import {
-  chunks,
-  commaSeparatedList,
-  getKeyshareObjects,
-} from "../utils";
+import { chunks, commaSeparatedList, getKeyshareObjects } from "../utils";
 import { areKeysharesValid } from "../ssv-keys";
-import { getClusterSnapshot, getOwnerNonceFromSubgraph, getRegisteredPubkeys } from "../subgraph";
+import {
+  getClusterSnapshot,
+  getOwnerNonceFromSubgraph,
+  getRegisteredPubkeys,
+  getValidatorCountPerOperator,
+} from "../subgraph";
 import {
   checkAndExecuteSignatures,
   createApprovedMultiSigTx,
@@ -29,11 +30,6 @@ etherfi
     "<directory>",
     "The path to the directory containing keyshare files"
   )
-  .option(
-    "-o, --operators <operators>",
-    "Comma separated list of ids of operators to register to",
-    commaSeparatedList
-  )
   .action(async (directory, options) => {
     console.info(figlet.textSync("SSV <> EtherFi"));
     console.info(
@@ -42,21 +38,48 @@ etherfi
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
-    let chunkSize = parseInt(process.env.CHUNK_SIZE || "40")
-
-    let clusterSnapshot = await getClusterSnapshot(
-      process.env.SAFE_ADDRESS,
-      options.operators.map((operator: string) => Number(operator))
-    );
+    let chunkSize = parseInt(process.env.CHUNK_SIZE || "40");
     let problems = new Map();
 
-    updateSpinnerText("Extracting keyshares from files in provided folder")
+    updateSpinnerText("Extracting keyshares from files in provided folder");
 
-    let keyshares = await getKeyshareObjects(
-      directory,
-      clusterSnapshot.validatorCount
+    let keyshares = await getKeyshareObjects(directory);
+    spinnerSuccess(`Done. Found ${keyshares.length} total keyshares`);
+
+    let operatorIds = new Set<number>();
+    // add operatorIds from the keyshares object to the operatorIds set
+    keyshares.map((item) =>
+      item.payload.operatorIds.map((operatorId) => operatorIds.add(operatorId))
     );
 
+    // get the validators count for each operator
+    let validatorsCountPerOperator = await getValidatorCountPerOperator(
+      Array.from(operatorIds)
+    );
+
+    // find the operator with the maximum number of validators, and the value itself
+    const operatorWmaxValidatorCount = validatorsCountPerOperator.reduce(
+      function (prev, current) {
+        return prev && prev.validatorCount > current.validatorCount
+          ? prev
+          : current;
+      }
+    );
+
+    if (operatorWmaxValidatorCount.validatorCount + keyshares.length > 500) {
+      // identify the item in the list that's going to be the last one
+      let lastKeysharesIndex = 500 - operatorWmaxValidatorCount.validatorCount;
+      let lastKeyshareObj = keyshares.at(lastKeysharesIndex);
+      console.error(
+        `Operator ${operatorWmaxValidatorCount.id} has ${operatorWmaxValidatorCount.validatorCount} validators.\n\n
+        Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators.\n\n
+        Going to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`
+      );
+      // splice the array, effectively reducing it to the correct number
+      keyshares.splice(lastKeysharesIndex);
+    }
+
+    updateSpinnerText(`Fetching registered public keys`);
     // find public keys that were already registered
     let registeredPubkeys = await getRegisteredPubkeys(keyshares.map((item) => item.data.publicKey))
 
