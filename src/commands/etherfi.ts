@@ -1,16 +1,9 @@
 import { Command } from "commander";
-import {
-  spinnerError,
-  spinnerSuccess,
-  stopSpinner,
-  updateSpinnerText,
-} from "../spinner";
 import figlet from "figlet";
 
-import { chunks, commaSeparatedList, getKeyshareObjects } from "../utils";
+import { chunks, getKeyshareObjects, debug } from "../utils";
 import { areKeysharesValid } from "../ssv-keys";
 import {
-  getClusterSnapshot,
   getOwnerNonceFromSubgraph,
   getRegisteredPubkeys,
   getValidatorCountPerOperator,
@@ -23,6 +16,8 @@ import {
 } from "../transaction";
 
 export const etherfi = new Command("etherfi");
+
+console.debug = debug
 
 etherfi
   .version("0.0.1", "-v, --vers", "output the current version")
@@ -41,10 +36,10 @@ etherfi
     let chunkSize = parseInt(process.env.CHUNK_SIZE || "40");
     let problems = new Map();
 
-    updateSpinnerText("Extracting keyshares from files in provided folder");
+    console.info("Extracting keyshares from files in provided folder");
 
     let keyshares = await getKeyshareObjects(directory);
-    spinnerSuccess(`Done. Found ${keyshares.length} total keyshares`);
+    console.info(`Done. Found ${keyshares.length} total keyshares`);
 
     let operatorIds = new Set<number>();
     // add operatorIds from the keyshares object to the operatorIds set
@@ -58,7 +53,7 @@ etherfi
     );
 
     // find the operator with the maximum number of validators, and the value itself
-    const operatorWmaxValidatorCount = validatorsCountPerOperator.reduce(
+    const maxVcountOperator = validatorsCountPerOperator.reduce(
       function (prev, current) {
         return prev && prev.validatorCount > current.validatorCount
           ? prev
@@ -66,44 +61,53 @@ etherfi
       }
     );
 
-    if (operatorWmaxValidatorCount.validatorCount + keyshares.length > 500) {
+    if (maxVcountOperator.validatorCount + keyshares.length > 500) {
       // identify the item in the list that's going to be the last one
-      let lastKeysharesIndex = 500 - operatorWmaxValidatorCount.validatorCount;
+      let lastKeysharesIndex = 500 - maxVcountOperator.validatorCount;
       let lastKeyshareObj = keyshares.at(lastKeysharesIndex);
-      console.error(
-        `Operator ${operatorWmaxValidatorCount.id} has ${operatorWmaxValidatorCount.validatorCount} validators.\n\n
-        Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators.\n\n
-        Going to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`
-      );
+      console.error(`Operator ${maxVcountOperator.id} has ${maxVcountOperator.validatorCount} validators.`);
+      console.error(`Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators.`);
+      console.error(`Going to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`);
       // splice the array, effectively reducing it to the correct number
       keyshares.splice(lastKeysharesIndex);
     }
 
-    updateSpinnerText(`Fetching registered public keys`);
+    console.info(`Fetching registered public keys`);
     // find public keys that were already registered
-    let registeredPubkeys = await getRegisteredPubkeys(keyshares.map((item) => item.data.publicKey))
-
-    updateSpinnerText(`Found ${registeredPubkeys.length} public keys already registered, removing them from the list.`)
+    let registeredPubkeys = await getRegisteredPubkeys(
+      keyshares.map((item) => item.data.publicKey)
+    );
 
     // remove them from the keyshares list
-    keyshares = keyshares.filter((item) => !registeredPubkeys.includes(item.data.publicKey))
+    keyshares = keyshares.filter(
+      (item) => !registeredPubkeys.includes(item.data.publicKey)
+    );
+    console.info(
+      `Found ${registeredPubkeys.length} public keys already registered, removed them from the list.`
+    );
 
-    const {signer, adapter} = await getSignerandAdapter(process.env.RPC_ENDPOINT, process.env.PRIVATE_KEY) 
+    const { signer, adapter } = await getSignerandAdapter(
+      process.env.RPC_ENDPOINT,
+      process.env.PRIVATE_KEY
+    );
     // need to initialize these
     let nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
     let expectedNonce = nonce;
 
     for (let keysharesChunk of [...chunks(keyshares, chunkSize)]) {
       // update nonce
+      console.info(`Obtaining owner nonce`);
       nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
-      console.debug(`Owner nonce: ${nonce}`);
+      console.info(`Owner nonce: ${nonce}`);
       // expected to be the same on first loop, but important on following ones
       if (nonce !== expectedNonce) {
-        console.error("Nonce has not been updated since last successful transaction!")
+        console.error(
+          "Nonce has not been updated since last successful transaction!"
+        );
         break;
       }
+      console.info("Verifying Keyshares validity");
       try {
-        updateSpinnerText("Verifying Keyshares validity")
         // test keyshares validity
         await areKeysharesValid(
           keysharesChunk,
@@ -111,8 +115,6 @@ etherfi
           process.env.SAFE_ADDRESS
         );
       } catch (error) {
-        spinnerError();
-        stopSpinner();
         let keyshareFilesWithIssues = Array.from(
           new Set(
             keysharesChunk.map((keyshares) => keyshares.keySharesFilePath)
@@ -126,8 +128,11 @@ etherfi
         }
         break;
       }
-      spinnerSuccess(`All Keyshares valid`)
+      console.info(`All Keyshares valid`);
 
+      console.info(
+        `Generating transaction data to register ${keysharesChunk.length} keys to ${process.env.SAFE_ADDRESS} account`
+      );
       let bulkRegistrationTxData;
       try {
         // build tx
@@ -137,8 +142,6 @@ etherfi
           signer
         );
       } catch (error) {
-        spinnerError();
-        stopSpinner();
         let keyshareFilesWithIssues = Array.from(
           new Set(
             keysharesChunk.map((keyshares) => keyshares.keySharesFilePath)
@@ -152,19 +155,24 @@ etherfi
         }
         break;
       }
+      console.info(`Successfully generated transaction`);
 
+      console.info(
+        "Generating multisig transaction with bulk transaction data"
+      );
       try {
         // create multi sig tx
         let multiSigTransaction = await createApprovedMultiSigTx(
           adapter,
           bulkRegistrationTxData
         );
-        console.info("Created multi-sig transaction.");
+        console.info(`Created multi-sig transaction.`);
         // verify status
+        console.info(
+          `Verifying multisig transaction signatures and threshold.`
+        );
         await checkAndExecuteSignatures(adapter, multiSigTransaction);
       } catch (error) {
-        spinnerError();
-        stopSpinner();
         let keyshareFilesWithIssues = Array.from(
           new Set(
             keysharesChunk.map((keyshares) => keyshares.keySharesFilePath)
@@ -179,22 +187,25 @@ etherfi
         break;
       }
 
-      spinnerSuccess(`Next user nonce is ${nonce + keyshares.length}`);
+      console.info(
+        `Transaction successfully executed. Next user nonce is ${
+          nonce + keyshares.length
+        }`
+      );
 
       // update expected nonce, if everything went as expected, data source should have exact same increment
       expectedNonce = nonce + chunkSize;
     }
-    spinnerSuccess(`Finished processing ${keyshares.length} keyshares`);
+    console.info(`Finished processing ${keyshares.length} keyshares`);
 
-    console.info(`Encountered ${problems.size} problem(s)\n`);
+    console.info(`\nEncountered ${problems.size} problem(s)\n`);
 
     for (let problem of problems) {
       console.error(
-        `Encountered issue when processing keystore file: ${problem[0]}`
+        `\nEncountered issue when processing keystore file: ${problem[0]}`
       );
-      console.error(`${problem[1]}\n\n`);
+      console.error(`\n${problem[1]}\n\n`);
     }
 
-    spinnerSuccess(`Done. Exiting script.`)
-    stopSpinner()
+    console.info(`Done. Exiting script.`);
   });

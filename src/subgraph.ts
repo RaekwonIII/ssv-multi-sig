@@ -150,7 +150,12 @@ export async function getValidatorCountPerOperator(operatorIds:number[]): Promis
     if (response.status !== 200) throw Error("Request did not return OK");
     if (!response.data.data.operators) throw Error("Response is empty");
 
-    validatorCountPerOperator = response.data.data.operators;
+    validatorCountPerOperator = response.data.data.operators.map((item: { id: string; validatorCount: string; }) => {
+      return {
+        id: parseInt(item.id),
+        validatorCount: parseInt(item.validatorCount)
+      }
+    });
 
   } catch (err) {
     console.error("ERROR DURING AXIOS REQUEST", err);
