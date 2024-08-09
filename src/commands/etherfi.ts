@@ -17,7 +17,7 @@ import {
 
 export const etherfi = new Command("etherfi");
 
-console.debug = debug
+console.debug = debug;
 
 etherfi
   .version("0.0.1", "-v, --vers", "output the current version")
@@ -52,26 +52,6 @@ etherfi
       Array.from(operatorIds)
     );
 
-    // find the operator with the maximum number of validators, and the value itself
-    const maxVcountOperator = validatorsCountPerOperator.reduce(
-      function (prev, current) {
-        return prev && prev.validatorCount > current.validatorCount
-          ? prev
-          : current;
-      }
-    );
-
-    if (maxVcountOperator.validatorCount + keyshares.length > 500) {
-      // identify the item in the list that's going to be the last one
-      let lastKeysharesIndex = 500 - maxVcountOperator.validatorCount;
-      let lastKeyshareObj = keyshares.at(lastKeysharesIndex);
-      console.error(`Operator ${maxVcountOperator.id} has ${maxVcountOperator.validatorCount} validators.`);
-      console.error(`Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators.`);
-      console.error(`Going to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`);
-      // splice the array, effectively reducing it to the correct number
-      keyshares.splice(lastKeysharesIndex);
-    }
-
     console.info(`Fetching registered public keys`);
     // find public keys that were already registered
     let registeredPubkeys = await getRegisteredPubkeys(
@@ -85,6 +65,33 @@ etherfi
     console.info(
       `Found ${registeredPubkeys.length} public keys already registered, removed them from the list.`
     );
+
+    // find the operator with the maximum number of validators, and the value itself
+    const maxVcountOperator = validatorsCountPerOperator.reduce(function (
+      prev,
+      current
+    ) {
+      return prev && prev.validatorCount > current.validatorCount
+        ? prev
+        : current;
+    });
+
+    if (maxVcountOperator.validatorCount + keyshares.length > 500) {
+      // identify the item in the list that's going to be the last one
+      let lastKeysharesIndex = 500 - maxVcountOperator.validatorCount;
+      let lastKeyshareObj = keyshares.at(lastKeysharesIndex);
+      console.error(
+        `Operator ${maxVcountOperator.id} has ${maxVcountOperator.validatorCount} validators.`
+      );
+      console.error(
+        `Pubkey ${lastKeyshareObj?.payload.publicKey} is going to cause operators to reach maximum validators.`
+      );
+      console.error(
+        `Going to only include files up to ${lastKeyshareObj?.keySharesFilePath} and only public keys preceding this one.`
+      );
+      // splice the array, effectively reducing it to the correct number
+      keyshares.splice(lastKeysharesIndex);
+    }
 
     const { signer, adapter } = await getSignerandAdapter(
       process.env.RPC_ENDPOINT,

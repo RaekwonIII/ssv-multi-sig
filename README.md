@@ -3,13 +3,17 @@
 
 ## Dependencies installation
 
-> This project was created using `bun init` in bun v1.0.11.
-> Newer versions of bun, might suffer from [this known issue](https://github.com/oven-sh/bun/issues/267)
-> In this case, it is advised to downgrade bun to this specific version `curl -fsSl https://bun.sh/install | bash -s "bun-v1.0.11"` or wait for an incoming fix.
+Install bun by running this command:
 
-[Bun](https://bun.sh) is a fast all-in-one JavaScript runtime. The best way to use this tool is to install Bun.
+```sh
+curl -fsSL https://bun.sh/install | bash
+```
 
-To install dependencies:
+> This project was created using bun `v1.0.11`.
+> Versions newer than `v1.0.11` but older than `v1.1.21`, might suffer from [this known issue](https://github.com/oven-sh/bun/issues/267)
+> In this case, either downgrade bun to this specific version `curl -fsSl https://bun.sh/install | bash -s "bun-v1.0.11"` or make sure to upgrade with `bun upgrade`.
+
+To install project dependencies:
 
 ```bash
 bun install
@@ -34,14 +38,22 @@ This sub-command automates validator registration when the owner is a multi-sig.
 Usage example:
 
 ```sh
-bun index.ts etherfi <PATH_TO_FOLDER_WITH_KEYSHARES_FILES> -o <OPERATOR_ID1>,<OPERATOR_ID2>,<OPERATOR_ID3>,<OPERATOR_ID4>
+bun index.ts etherfi <PATH_TO_FOLDER_WITH_KEYSHARES_FILES>
 ```
 
-This will iterate over all the `keyshares**.json` files found in the provided `<PATH_TO_FOLDER_WITH_KEYSHARES_FILES>` and all its subfolders and generate a multi-sig transaction (and provide first confirmation) to `bulkRegisterValidator` 40 public keys at a time, using the payload information from the keyshares file(s).
+The script will:
 
-One additional check is performed, by looking at the number of validators in the cluster: if the pubkeys found will cause the operators to exceed the 500 validators mark, it will not consider the exceeding public keys, and report the last filename used.
-
-Finally, when the multi-sig transaction is created (and confirmed), it verifies if the necessary number of confirmations is reached, and in that case, it proceeds to execute it.
+* iterate over all the `keyshares**.json` files found in the provided `<PATH_TO_FOLDER_WITH_KEYSHARES_FILES>` and all its subfolders
+* generate a list of keyshare objects in memory, and order the list using the owner `nonce` (ascending)
+* verify which validators from the generated list is already registered to the network and ignore them
+* verify the minimum validator capacity of the operators set (using first keyshares object, assumption is all keyshares use the same operator set)
+  * if the total number of keyshares will bring an operator above the maximum number of validators permitted (500), it will stop at the `Nth` key that will not cause to pass the threshold
+* iterate over the list, dividing it in batches, the size of which is dictated by the `CHUNK_SIZE` environment variable. For each batch of keyshares, it will:
+  * validate the keyshares, verifying the validity of bls keys (validator pubkey and operator pubkeys), and the validity of the signed message (`${address}:${ownerNonce}`)
+  * generate transaction data to `bulkRegisterValidator` 40 public keys at a time, using the payload information from the keyshares file(s), including a deposit of 10 SSV tokens
+  * generate a multi-sig transaction (and provide first confirmation) with the transaction data
+  * verify if the threshold of signatures is met, and if so, execute the transaction
+* then restart the iteration with the next batch
 
 At the end of the process, it reports files that included keyshares with issues encountered and filenames containing the keyshares that had issues.
 
