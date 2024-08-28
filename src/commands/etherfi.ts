@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import figlet from "figlet";
 
-import { chunks, getKeyshareObjects, debug } from "../utils";
+import { chunks, getKeyshareObjects, debug, retryWithExponentialBackoff } from "../utils";
 import { areKeysharesValid } from "../ssv-keys";
 import {
   getOwnerNonceFromSubgraph,
@@ -102,17 +102,34 @@ etherfi
     let expectedNonce = nonce;
 
     for (let keysharesChunk of [...chunks(keyshares, chunkSize)]) {
-      // update nonce
-      console.info(`Obtaining owner nonce`);
-      nonce = await getOwnerNonceFromSubgraph(process.env.SAFE_ADDRESS);
-      console.info(`Owner nonce: ${nonce}`);
-      // expected to be the same on first loop, but important on following ones
-      if (nonce !== expectedNonce) {
-        console.error(
-          "Nonce has not been updated since last successful transaction!"
+
+      try {
+        await retryWithExponentialBackoff(verifyUpdatedNonce, {nonce, expectedNonce, ownerAddress: process.env.SAFE_ADDRESS}, {
+          retries: 3,
+          factor: 2,
+          maxTimeout: 10000,
+          maxRetryTime: 5000,
+        })
+      }
+      catch (err) {
+        let error
+        if (err instanceof Error) error = err.message
+        else error = "Nonce has not been updated since last successful transaction! Exiting"
+      
+        let keyshareFilesWithIssues = Array.from(
+          new Set(
+            keysharesChunk.map((keyshares) => keyshares.keySharesFilePath)
+          )
         );
+        for (let keyshareFileWithIssues of keyshareFilesWithIssues) {
+          problems.set(
+            keyshareFileWithIssues,
+            `Nonce verificationissue when processing file ${keyshareFileWithIssues}:\n${error}`
+          );
+        }
         break;
       }
+      
       console.info("Verifying Keyshares validity");
       try {
         // test keyshares validity
@@ -195,8 +212,8 @@ etherfi
       }
 
       console.info(
-        `Transaction successfully executed. Next user nonce is ${
-          nonce + keyshares.length
+        `Transaction successfully executed. Next user nonce should be ${
+          nonce + keysharesChunk.length
         }`
       );
 
@@ -216,3 +233,18 @@ etherfi
 
     console.info(`Done. Exiting script.`);
   });
+
+  async function verifyUpdatedNonce(options: {nonce:number, expectedNonce: number, ownerAddress: string}) {
+    var {nonce, expectedNonce, ownerAddress} = options
+    // update nonce
+    console.info(`Obtaining owner nonce`);
+    nonce = await getOwnerNonceFromSubgraph(ownerAddress);
+    console.info(`Owner nonce: ${nonce}`);
+    // expected to be the same on first loop, but important on following ones
+    if (nonce !== expectedNonce) {
+      console.error(
+        "Nonce has not been updated since last successful transaction, retrying"
+      );
+      throw Error("Nonce has not been updated since last successful transaction! Exiting")
+    }
+  }
