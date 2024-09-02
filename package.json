@@ -3,6 +3,7 @@
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
+    "@types/retry": "^0.12.5",
     "bun-types": "latest"
   },
   "peerDependencies": {
@@ -22,6 +23,7 @@
     "figlet": "^1.7.0",
     "glob": "^10.3.10",
     "ora": "^7.0.1",
+    "retry": "^0.13.1",
     "ssv-keys": "github:bloxapp/ssv-keys",
     "web3": "^4.2.2"
   },

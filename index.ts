@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 
-import { spinnerError, stopSpinner } from "./src/spinner";
 import { etherfi } from "./src/commands/etherfi";
 
 
@@ -17,8 +16,6 @@ process.on('unhandledRejection', function (err: Error) { // listen for unhandled
     if(debug) {
         console.error(err.stack); // print the stack trace if we're in verbose mode
     }
-    spinnerError() // show an error spinner
-    stopSpinner() // stop the spinner
     program.error('', { exitCode: 1 }); // exit with error code 1
 })
 
