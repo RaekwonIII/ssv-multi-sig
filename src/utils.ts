@@ -16,12 +16,11 @@ export type ShareObject = {
     ownerNonce: number;
     ownerAddress: string;
     publicKey: string;
-    operators: [
+    operators: 
       {
         id: number;
         operatorKey: string;
-      }
-    ];
+      }[];
   };
   payload: {
     publicKey: string;
@@ -29,6 +28,12 @@ export type ShareObject = {
     sharesData: string;
   };
 };
+
+export type ValidatorRegistrationData = {
+  sharesObjArr: ShareObject[],
+  blockNumber: number,
+  ownerAddress: string
+}
 
 // generator function to split the list of keyshares into chunks
 // this is needed because there is a limit on the number of public keys
