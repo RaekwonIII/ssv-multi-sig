@@ -14,12 +14,12 @@ const MAX_VALIDATORS_PER_OPERATOR = 1000;
 etherfi
   .version("0.0.2", "-v, --vers", "output the current version")
   .argument(
-    "<operators>",
+    "<operatorIds>",
     "comma separated list of ids of operators to test",
     commaSeparatedList
   )
   .option("-n, --num-keys <num-keys>", "number of keys to generate")
-  .action(async (operators, _options) => {
+  .action(async (operatorIds, _options) => {
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
@@ -28,16 +28,20 @@ etherfi
       throw Error("Keystores output directory not provided");
     if (!process.env.KEYSTORE_PASSWORD)
       throw Error("Keystore password not provided");
-
-    let numKeys = parseInt(_options.numKeys) || MAX_VALIDATORS_PER_OPERATOR;
-    const chunkSize = parseInt(process.env.CHUNK_SIZE || "40");
-
-    const operatorIds = operators.map((item: string) => parseInt(item));
+    
+    console.log(`Registering keyshares to operators: ${JSON.stringify(operatorIds)}`)
 
     const private_key = process.env.PRIVATE_KEY as `0x${string}`;
-    const chain = chains.hoodi;
-    const transport = http();
+    let keysCount = parseInt(_options.numKeys) || MAX_VALIDATORS_PER_OPERATOR;
+    console.log(`Requested creation of ${keysCount} keys.`)
 
+    const chunkSize = parseInt(process.env.CHUNK_SIZE || "40");
+    console.log(`Maximum number of keys per transaction: ${chunkSize}.`)
+
+    const chain = process.env.TESTNET? chains.hoodi : chains.mainnet
+    console.log(`Using chain with ID: ${chain.id}`)
+
+    const transport = http();
     const publicClient = createPublicClient({
       chain,
       transport,
@@ -62,6 +66,7 @@ etherfi
         process.env.SAFE_ADDRESS,
     )
 
+    console.log(`Collecting operator data...`)
     const operatorsData = (
       await sdk.api.getOperators({
         operatorIds: operatorIds,
@@ -74,24 +79,25 @@ etherfi
         ? prev
         : current;
     });
+    console.log(`Operator with the most validators registered to it has ${maxVcountOperator.validatorCount} keys`)
 
     if (
-      parseInt(maxVcountOperator.validatorCount) + numKeys >
+      parseInt(maxVcountOperator.validatorCount) + keysCount >
       MAX_VALIDATORS_PER_OPERATOR
     ) {
       // identify what is the maximum number of keys that can be registered
-      numKeys =
+      keysCount =
         MAX_VALIDATORS_PER_OPERATOR -
         parseInt(maxVcountOperator.validatorCount);
 
       console.info(
-        `Operator ${maxVcountOperator.id} has ${maxVcountOperator.validatorCount} validators.\nGoing to only generate ${numKeys} total keys to register.`
+        `Operator ${maxVcountOperator.id} has ${maxVcountOperator.validatorCount} validators.\nGoing to only generate ${keysCount} total keys to register.`
       );
     }
 
-    let totalKeysCreated = 0;
+    let totalKeysRegistered = 0;
 
-    while (totalKeysCreated < numKeys) {
+    while (totalKeysRegistered < keysCount) {
       // generate the maximum number of keys that can be registered in a single transaction
       const keys = await createValidatorKeys({
         count: chunkSize,
@@ -120,6 +126,7 @@ etherfi
       });
 
       // generate the transaction
+      // sdk.contract.ssv.write.bulkRegisterValidator()
       const tx_data = await sdk.clusters
       .registerValidators({
         args: {
@@ -128,10 +135,11 @@ etherfi
         },
       })
       // generate Safe TX
-      const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, tx_data)
+      // const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, tx_data)
+      const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, "tx_data")
       await checkAndExecuteSignatures(safeProtocolKit, multiSigTransaction);
 
-      totalKeysCreated += chunkSize;
+      totalKeysRegistered += chunkSize;
     }
   });
 
@@ -179,5 +187,5 @@ function writeKeysToFiles(keys: ValidatorKeys, outputPath: string): void {
 }
 
 function commaSeparatedList(value: string, _dummyPrevious: unknown) {
-  return value.split(",");
+  return value.split(",").map((item: string) => parseInt(item));
 }
