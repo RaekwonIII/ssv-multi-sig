@@ -7,11 +7,11 @@ import { privateKeyToAccount } from "viem/accounts";
 import { createValidatorKeys, ValidatorKeys } from "./generate.js";
 import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit } from "./transaction.js";
 
-export const etherfi = new Command("etherfi");
+export const register = new Command("register");
 
 const MAX_VALIDATORS_PER_OPERATOR = 1000;
 
-etherfi
+register
   .version("0.0.2", "-v, --vers", "output the current version")
   .argument(
     "<operatorIds>",

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { etherfi } from "./etherfi";
+import { register } from "./register";
 
 const program = new Command();
 program
@@ -7,7 +7,7 @@ program
     "A command line tool to register operators to a validator in bulk using a multisig wallet."
   )
   .version("0.0.1")
-  .addCommand(etherfi);
+  .addCommand(register);
 
 process.on("unhandledRejection", function (err: Error) {
   // listen for unhandled promise rejections
