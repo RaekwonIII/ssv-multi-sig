@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { register } from "./register";
+import { register } from "./register.js";
 
 const program = new Command();
 program

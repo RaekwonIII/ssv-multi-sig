@@ -1,11 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Command } from "commander";
 import { SSVSDK, chains } from "@ssv-labs/ssv-sdk";
-import { parseEther, createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http } from "viem";
 import * as fs from "fs";
 import { privateKeyToAccount } from "viem/accounts";
 import { createValidatorKeys, ValidatorKeys } from "./generate.js";
-import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit } from "./transaction.js";
+// import {  getSafeProtocolKit } from "./transaction.js";
+
+import * as dotenv from "dotenv";
+dotenv.config();
 
 export const register = new Command("register");
 
@@ -38,7 +41,8 @@ register
     const chunkSize = parseInt(process.env.CHUNK_SIZE || "40");
     console.log(`Maximum number of keys per transaction: ${chunkSize}.`)
 
-    const chain = process.env.TESTNET? chains.hoodi : chains.mainnet
+    // const chain = process.env.TESTNET? chains.hoodi : chains.mainnet
+    const chain = process.env.TESTNET? chains.holesky : chains.mainnet
     console.log(`Using chain with ID: ${chain.id}`)
 
     const transport = http();
@@ -60,16 +64,16 @@ register
       publicClient: publicClient,
     });
 
-    const safeProtocolKit = await getSafeProtocolKit(
-        process.env.RPC_ENDPOINT,
-        process.env.PRIVATE_KEY,
-        process.env.SAFE_ADDRESS,
-    )
+    // const safeProtocolKit = await getSafeProtocolKit(
+    //     process.env.RPC_ENDPOINT,
+    //     process.env.PRIVATE_KEY,
+    //     process.env.SAFE_ADDRESS,
+    // )
 
     console.log(`Collecting operator data...`)
     const operatorsData = (
       await sdk.api.getOperators({
-        operatorIds: operatorIds,
+        operatorIds: operatorIds.map((id: number) => `${id}`),
       })
     ).sort((a, b) => Number(a.id) - Number(b.id));
 
@@ -105,16 +109,14 @@ register
         password: process.env.KEYSTORE_PASSWORD,
       });
 
-      // write the keys to respective seed phrase file, deposit file and various keystores files
-      writeKeysToFiles(keys, process.env.KEYSTORES_OUTPUT_DIRECTORY);
-
+      
       // get the user nonce
       const nonce = Number(
         await sdk.api.getOwnerNonce({ owner: process.env.OWNER_ADDRESS })
       );
-
+      
       console.log("Initial nonce: ", nonce);
-
+      
       // split keys into keyshares
       const keysharesPayloads = await sdk.utils.generateKeyShares({
         keystore: JSON.stringify(keys.keystores),
@@ -124,26 +126,29 @@ register
         owner_address: process.env.OWNER_ADDRESS,
         nonce: nonce,
       });
+      
+      // write the keys to respective seed phrase file, deposit file and various keystores files
+      writeKeysToFiles(keys, keysharesPayloads, process.env.KEYSTORES_OUTPUT_DIRECTORY);
 
       // generate the transaction
       // sdk.contract.ssv.write.bulkRegisterValidator()
-      const tx_data = await sdk.clusters
-      .registerValidators({
-        args: {
-          keyshares: keysharesPayloads,
-          depositAmount: parseEther("30"),
-        },
-      })
-      // generate Safe TX
-      // const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, tx_data)
-      const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, "tx_data")
-      await checkAndExecuteSignatures(safeProtocolKit, multiSigTransaction);
+      // const tx_data = await sdk.clusters
+      // .registerValidators({
+      //   args: {
+      //     keyshares: keysharesPayloads,
+      //     depositAmount: parseEther("30"),
+      //   },
+      // })
+      // // generate Safe TX
+      // // const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, tx_data)
+      // const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, "tx_data")
+      // await checkAndExecuteSignatures(safeProtocolKit, multiSigTransaction);
 
       totalKeysRegistered += chunkSize;
     }
   });
 
-function writeKeysToFiles(keys: ValidatorKeys, outputPath: string): void {
+function writeKeysToFiles(keys: ValidatorKeys, keysharesPayloads: unknown, outputPath: string): void {
   // write seed phrase
   fs.writeFile(
     `${outputPath}/master-${keys.masterSKHash}`,
@@ -184,6 +189,19 @@ function writeKeysToFiles(keys: ValidatorKeys, outputPath: string): void {
       }
     });
   }
+  // write deposit file
+  fs.writeFile(
+    `${outputPath}/keyshares-${keys.masterSKHash}`,
+    JSON.stringify(keysharesPayloads),
+    (err) => {
+      if (err) {
+        console.error("Failed to write to file: ", err);
+      } else {
+        console.log(`Operators saved to file: ${outputPath}`);
+      }
+    }
+  );
+
 }
 
 function commaSeparatedList(value: string, _dummyPrevious: unknown) {

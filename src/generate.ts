@@ -1,14 +1,19 @@
 import { deriveEth2ValidatorKeys, generateRandomSecretKey } from '@chainsafe/bls-keygen'
 import { create, IKeystore } from '@chainsafe/bls-keystore'
-import bls from '@chainsafe/bls/herumi'
+// import bls from '@chainsafe/bls/'
 import { fromHexString, toHexString } from '@chainsafe/ssz'
-import { holeskyChainConfig } from '@lodestar/config/networks'
-import { DOMAIN_DEPOSIT } from '@lodestar/params'
-import { ZERO_HASH, computeDomain, computeSigningRoot } from '@lodestar/state-transition'
-import { ssz } from '@lodestar/types/phase0'
+// import { holeskyChainConfig } from '@lodestar/config/networks'
+// import { DOMAIN_DEPOSIT } from '@lodestar/params'
+// import { ZERO_HASH, computeDomain, computeSigningRoot } from '@lodestar/state-transition'
+// import { ssz } from '@lodestar/types/phase0'
 import type { Address } from 'abitype'
 import type { ByteArray, Hex } from 'viem'
 import { sha256, toBytes, toHex } from 'viem'
+import bls from '../node_modules/@chainsafe/bls/lib/blst-native/index.js'
+import { holeskyChainConfig } from '../node_modules/@lodestar/config/lib/networks.js'
+import { DOMAIN_DEPOSIT } from '../node_modules/@lodestar/params/lib/index.js'
+import { ZERO_HASH, computeDomain, computeSigningRoot } from '../node_modules/@lodestar/state-transition/lib/index.js'
+import { ssz } from '../node_modules/@lodestar/types/lib/phase0/index.js'
 
 export type ValidatorKeys = {
   keystores: IKeystore[];
@@ -88,6 +93,7 @@ export async function createValidatorKeys({
   const masterSKHash = sha256(masterSK,'bytes')
 
   for (let i = index; i < count; i++) {
+
     const sk = bls.SecretKey.fromBytes(deriveEth2ValidatorKeys(masterSK, i).signing)
     const pubkey = sk.toPublicKey()
     const pubkeyBytes = pubkey.toBytes()
