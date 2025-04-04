@@ -37,49 +37,25 @@ export async function createApprovedMultiSigTx(
   let safeTransaction = await protocolKit.createTransaction({
     transactions: [safeTransactionData],
   });
-  // const approveTxResponse = await protocolKit.approveTransactionHash(
-  //   safeTxHash
-  // );
-  
-  // API kit tests section 🤷‍♂️
-  console.debug("Signing transaction...");
-  let apiKit;
-  if (!process.env.TX_SERVICE) {
-    apiKit = new SafeApiKit({
-      chainId: 17000n,
-    });
-  } else {
-    apiKit = new SafeApiKit({
-      chainId: 17000n, // set the correct chainId
-      txServiceUrl: process.env.TX_SERVICE
-    });
-  }
-  console.debug(`Getting transaction...`)
-  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
-  console.debug(`...${safeTxHash}`)
-  console.debug(`Generating signature...`)
-  const signature = await protocolKit.signHash(safeTxHash)
-  console.debug(`...signed: ${signature.data}`)
-  
-  console.debug(`Proposing signed transaction...`)
-  // Propose transaction to the service
-  await apiKit.proposeTransaction({
-    safeAddress: process.env.SAFE_ADDRESS || "",
-    safeTransactionData: safeTransaction.data,
-    safeTxHash,
-    senderAddress: process.env.OWNER_ADDRESS || "",
-    senderSignature: signature.data
-  })
-  
-  console.debug(`Confirming transaction...`)
-  const signatureResponse = await apiKit.confirmTransaction(
-    safeTxHash,
-    signature.data
-  )
+
+  console.debug(`Signatures before: ${JSON.stringify(safeTransaction.signatures)}`);
   console.debug(`Signing transaction...`)
+
+  // three different ways in which the tx should be signed
+  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
+  // on-chain approval:
+  const approveTxResponse = await protocolKit.approveTransactionHash(
+    safeTxHash
+  );
+  // adding a signatures to the tx
   safeTransaction = await protocolKit.signTransaction(safeTransaction);
 
-  console.debug(`Transaction signed: ${JSON.stringify(signatureResponse)}`);
+  const signature = await protocolKit.signHash(safeTxHash)
+  // a different way to add a signature to the tx
+  safeTransaction.addSignature(signature)
+
+  // and yet, they don't seem to be working
+  console.debug(`Signatures after: ${JSON.stringify(safeTransaction.signatures)}`);
   return safeTransaction;
 }
 
