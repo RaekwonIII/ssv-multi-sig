@@ -26,6 +26,7 @@ register
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
+    if (!process.env.SSV_CONTRACT) throw Error("No SSV contract address provided");
     if (!process.env.OWNER_ADDRESS) throw Error("No Owner address provided");
     if (!process.env.KEYSTORES_OUTPUT_DIRECTORY)
       throw Error("Keystores output directory not provided");
