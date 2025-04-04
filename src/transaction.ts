@@ -4,6 +4,8 @@ import {
   SafeTransaction,
 } from "@safe-global/safe-core-sdk-types";
 
+import SafeApiKit from "@safe-global/api-kit";
+
 import Safe from "@safe-global/protocol-kit";
 
 export async function getSafeProtocolKit(
@@ -31,9 +33,54 @@ export async function createApprovedMultiSigTx(
     operation: OperationType.Call,
   };
 
-  return await protocolKit.createTransaction({
+  console.debug("Generating transaction...");
+  let safeTransaction = await protocolKit.createTransaction({
     transactions: [safeTransactionData],
   });
+  // const approveTxResponse = await protocolKit.approveTransactionHash(
+  //   safeTxHash
+  // );
+  
+  // API kit tests section 🤷‍♂️
+  console.debug("Signing transaction...");
+  let apiKit;
+  if (!process.env.TX_SERVICE) {
+    apiKit = new SafeApiKit({
+      chainId: 17000n,
+    });
+  } else {
+    apiKit = new SafeApiKit({
+      chainId: 17000n, // set the correct chainId
+      txServiceUrl: process.env.TX_SERVICE
+    });
+  }
+  console.debug(`Getting transaction...`)
+  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
+  console.debug(`...${safeTxHash}`)
+  console.debug(`Generating signature...`)
+  const signature = await protocolKit.signHash(safeTxHash)
+  console.debug(`...signed: ${signature.data}`)
+  
+  console.debug(`Proposing signed transaction...`)
+  // Propose transaction to the service
+  await apiKit.proposeTransaction({
+    safeAddress: process.env.SAFE_ADDRESS || "",
+    safeTransactionData: safeTransaction.data,
+    safeTxHash,
+    senderAddress: process.env.OWNER_ADDRESS || "",
+    senderSignature: signature.data
+  })
+  
+  console.debug(`Confirming transaction...`)
+  const signatureResponse = await apiKit.confirmTransaction(
+    safeTxHash,
+    signature.data
+  )
+  console.debug(`Signing transaction...`)
+  safeTransaction = await protocolKit.signTransaction(safeTransaction);
+
+  console.debug(`Transaction signed: ${JSON.stringify(signatureResponse)}`);
+  return safeTransaction;
 }
 
 export async function checkAndExecuteSignatures(
@@ -49,15 +96,7 @@ export async function checkAndExecuteSignatures(
       `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify this transaction data: \n${safeTransaction.data.data}`
     );
 
-  // const signature = await protocolKit.signHash(safeTxHash);
-  // await apiKit.confirmTransaction(safeTxHash, signature.data);
   console.debug("Transaction is valid.");
-  console.debug("Signing transaction...");
-  const approveTxResponse = await protocolKit.approveTransactionHash(
-    safeTxHash
-  );
-  // await approveTxResponse.transactionResponse?.wait();
-  console.debug(`Transaction signed: ${approveTxResponse.transactionResponse}`);
 
   const threshold = await protocolKit.getThreshold();
   const numberOfApprovers = (
@@ -74,9 +113,6 @@ export async function checkAndExecuteSignatures(
   const executeTxResponse = await protocolKit.executeTransaction(
     safeTransaction
   );
-  // const receipt =
-  //   executeTxResponse.transactionResponse
-  //   && (await executeTxResponse.transactionResponse.wait());
 
   if (Number(await protocolKit.getChainId()) === 1)
     console.log(
