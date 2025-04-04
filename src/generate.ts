@@ -1,7 +1,7 @@
 import { deriveEth2ValidatorKeys, generateRandomSecretKey } from '@chainsafe/bls-keygen'
 import { create, IKeystore } from '@chainsafe/bls-keystore'
-// import bls from '@chainsafe/bls/'
 import { fromHexString, toHexString } from '@chainsafe/ssz'
+import { SecretKey } from '@chainsafe/blst'
 // import { holeskyChainConfig } from '@lodestar/config/networks'
 // import { DOMAIN_DEPOSIT } from '@lodestar/params'
 // import { ZERO_HASH, computeDomain, computeSigningRoot } from '@lodestar/state-transition'
@@ -9,7 +9,6 @@ import { fromHexString, toHexString } from '@chainsafe/ssz'
 import type { Address } from 'abitype'
 import type { ByteArray, Hex } from 'viem'
 import { sha256, toBytes, toHex } from 'viem'
-import bls from '../node_modules/@chainsafe/bls/lib/blst-native/index.js'
 import { holeskyChainConfig } from '../node_modules/@lodestar/config/lib/networks.js'
 import { DOMAIN_DEPOSIT } from '../node_modules/@lodestar/params/lib/index.js'
 import { ZERO_HASH, computeDomain, computeSigningRoot } from '../node_modules/@lodestar/state-transition/lib/index.js'
@@ -28,7 +27,7 @@ export type ValidatorKeys = {
       network_name: string;
   }[];
   masterSK: Uint8Array<ArrayBufferLike>;
-  masterSKHash: ByteArray
+  masterSKHash: `0x${string}`
 }
 
 export type ValidatorKeysArgs = {
@@ -90,17 +89,16 @@ export async function createValidatorKeys({
 }: ValidatorKeysArgs): Promise<ValidatorKeys> {
   const keystores = []
   const deposit_data = []
-  const masterSKHash = sha256(masterSK,'bytes')
+  const masterSKHash = sha256(masterSK)
 
   for (let i = index; i < count; i++) {
 
-    const sk = bls.SecretKey.fromBytes(deriveEth2ValidatorKeys(masterSK, i).signing)
+    const sk = SecretKey.fromBytes(deriveEth2ValidatorKeys(masterSK, i).signing)
     const pubkey = sk.toPublicKey()
     const pubkeyBytes = pubkey.toBytes()
 
     const keystore = await create(password, sk.toBytes(), pubkeyBytes, `m/12381/3600/${i}/0/0`)
     keystores.push(keystore)
-
     // Generate deposit data
     const withdrawalCredentials = fromHexString(
       '0x010000000000000000000000' + withdrawal.replace('0x', ''),
