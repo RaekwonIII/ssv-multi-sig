@@ -1,11 +1,15 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Command } from "commander";
 import { SSVSDK, chains } from "@ssv-labs/ssv-sdk";
+import { createClusterId } from '@ssv-labs/ssv-sdk/utils'
 import { createPublicClient, createWalletClient, http, parseEther } from "viem";
 import * as fs from "fs";
 import { privateKeyToAccount } from "viem/accounts";
 import { createValidatorKeys, ValidatorKeys } from "./generate.js";
 import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit } from "./transaction.js";
+import SSVContract from "../abi/SSVNetwork.json";
+import axios from "axios";
+import { ethers } from "ethers";
 
 import * as dotenv from "dotenv";
 dotenv.config();
@@ -132,15 +136,44 @@ register
       // write the keys to respective seed phrase file, deposit file and various keystores files
       writeKeysToFiles(keys, keysharesPayloads, process.env.KEYSTORES_OUTPUT_DIRECTORY);
 
-      // generate the transaction data
-      let txData = await sdk.clusters.registerValidatorsRawData({
-        args: {
-          keyshares: keysharesPayloads,
-          depositAmount: parseEther("10"),
+      // Transform keysharesPayloads into ShareObject type
+      const shareObjects: ShareObject[] = keysharesPayloads.map((payload: any) => ({
+        keySharesFilePath: `${process.env.KEYSTORES_OUTPUT_DIRECTORY}/keyshares-${keys.masterSKHash}.json`,
+        data: {
+          ownerNonce: nonce,
+          ownerAddress: process.env.OWNER_ADDRESS!,
+          publicKey: payload.publicKey,
+          operators: [{
+            id: Number(operatorsData[0].id),
+            operatorKey: operatorsData[0].publicKey
+          }]
+        },
+        payload: {
+          publicKey: payload.publicKey,
+          operatorIds: operatorsData.map((operator) => Number(operator.id)),
+          sharesData: payload.sharesData
         }
-      })
+      }));
 
-      // console.debug(`Transaction data: ${txData}`)
+      const clusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds)
+      
+      if (!clusterSnapshot) {
+        throw new Error("Failed to get cluster snapshot");
+      }
+      
+      // Format cluster snapshot according to contract requirements
+      const formattedClusterSnapshot = {
+        validatorCount: Number(clusterSnapshot.validatorCount || 0),
+        networkFeeIndex: BigInt(clusterSnapshot.networkFeeIndex || 0),
+        index: BigInt(clusterSnapshot.index || 0),
+        active: clusterSnapshot.active || false,
+        balance: BigInt(clusterSnapshot.balance || 0)
+      }
+      
+      // Convert walletClient to ethers Wallet
+      const ethersWallet = new ethers.Wallet(private_key, new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT));
+      
+      let txData = await getBulkRegistrationTxData(shareObjects, process.env.OWNER_ADDRESS, ethersWallet, formattedClusterSnapshot)
 
       // generate Safe TX
       const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, txData)
@@ -208,4 +241,147 @@ function writeKeysToFiles(keys: ValidatorKeys, keysharesPayloads: unknown, outpu
 
 function commaSeparatedList(value: string, _dummyPrevious: unknown) {
   return value.split(",").map((item: string) => parseInt(item));
+}
+
+
+export type ShareObject = {
+  keySharesFilePath: string;
+  data: {
+    ownerNonce: number;
+    ownerAddress: string;
+    publicKey: string;
+    operators: [
+      {
+        id: number;
+        operatorKey: string;
+      }
+    ];
+  };
+  payload: {
+    publicKey: string;
+    operatorIds: number[];
+    sharesData: string;
+  };
+};
+export type ClusterSnapshot = {
+  validatorCount: number;
+  networkFeeIndex: number;
+  index: number;
+  active: boolean;
+  balance: number;
+};
+
+export async function getClusterSnapshot(
+  owner: string,
+  operatorIDs: number[]
+): Promise<ClusterSnapshot> {
+  let clusterSnapshot: ClusterSnapshot = {
+    validatorCount: 0,
+    networkFeeIndex: 0,
+    index: 0,
+    active: true,
+    balance: 0,
+  };
+  try {
+    const query = `
+      query clusterSnapshot($owner: ID!, $operatorIds: [BigInt!]!) {
+        clusters(
+          where: {owner_: {id: $owner}, operatorIds: $operatorIds}
+        ) {
+          validatorCount
+          networkFeeIndex
+          index
+          active
+          balance
+        }
+      }
+    `;
+    const variables = {
+      owner: owner,
+      operatorIds: operatorIDs,
+    };
+
+    console.log("GraphQL Query:", query);
+    console.log("Query Variables:", JSON.stringify(variables, null, 2));
+
+    const response = await axios({
+      method: "POST",
+      url:
+        process.env.SUBGRAPH_API ||
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/",
+      headers: {
+        "content-type": "application/json",
+      },
+      data: {
+        query,
+        variables,
+      },
+    });
+    if (response.status !== 200) throw Error("Request did not return OK");
+
+    if (response.data.data.clusters && response.data.data.clusters.length > 0)
+      clusterSnapshot = response.data.data.clusters[0];
+
+    console.debug(
+      `Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
+    );
+  } catch (err) {
+    console.error("ERROR DURING AXIOS REQUEST", err);
+  } finally {
+    return clusterSnapshot;
+  }
+}
+
+export async function getBulkRegistrationTxData(
+  sharesDataObjectArray: ShareObject[],
+  owner: string,
+  signer: ethers.Wallet,
+  clusterSnapshot: {
+    validatorCount: number;
+    networkFeeIndex: bigint;
+    index: bigint;
+    active: boolean;
+    balance: bigint;
+  }
+) {
+  let contract = new ethers.Contract(
+    process.env.SSV_CONTRACT || "",
+    SSVContract,
+    signer
+  );
+
+  let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
+    return keyshareObj.payload.publicKey;
+  });
+
+  let sharesData = sharesDataObjectArray.map((keyshareObj) => {
+    return keyshareObj.payload.sharesData;
+  });
+
+  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
+  let amount = ethers.parseEther("10");
+
+  let transaction = await contract.bulkRegisterValidator.populateTransaction(
+    pubkeys,
+    operatorIds,
+    sharesData,
+    amount,
+    clusterSnapshot,
+    {
+      gasLimit: 3000000, // gas estimation does not work
+    }
+  );
+
+  console.log(`==============================================`)
+  // Convert BigInt values to strings for logging
+  const loggableClusterSnapshot = {
+    ...clusterSnapshot,
+    networkFeeIndex: clusterSnapshot.networkFeeIndex.toString(),
+    index: clusterSnapshot.index.toString(),
+    balance: clusterSnapshot.balance.toString()
+  };
+  console.log(`Cluster snapshot: ${JSON.stringify(loggableClusterSnapshot)}`);
+  console.log(`==============================================`)
+
+  return transaction.data;
 }

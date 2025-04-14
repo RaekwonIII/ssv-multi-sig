@@ -7,6 +7,38 @@ import {
 import SafeApiKit from "@safe-global/api-kit";
 
 import Safe from "@safe-global/protocol-kit";
+import { TransactionResponse } from "ethers";
+import retry from "retry";
+
+type RetryOptions = {
+  retries: number;
+  factor: number;
+  minTimeout: number;
+  maxTimeout: number;
+  randomize: boolean;
+};
+
+export function retryWithExponentialBackoff<T>(
+  operation: () => Promise<T>,
+  options: RetryOptions
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const operationRetry = retry.operation(options);
+
+    operationRetry.attempt(() => {
+      operation()
+        .then((result) => {
+          resolve(result);
+        })
+        .catch((err) => {
+          if (operationRetry.retry(err)) {
+            return;
+          }
+          reject(operationRetry.mainError());
+        });
+    });
+  });
+}
 
 export async function getSafeProtocolKit(
   rpc_url: string,
@@ -25,37 +57,87 @@ export async function createApprovedMultiSigTx(
   protocolKit: Safe,
   transaction_data: string
 ) {
-  // Create transaction
-  const safeTransactionData: MetaTransactionData = {
-    to: `${process.env.SSV_CONTRACT}`,
-    value: "0",
-    data: transaction_data,
-    operation: OperationType.Call,
-  };
-
-  console.debug("Generating transaction...");
-  let safeTransaction = await protocolKit.createTransaction({
-    transactions: [safeTransactionData],
+  console.debug("Received transaction data:", {
+    length: transaction_data.length,
+    firstChars: transaction_data.substring(0, 10) + "...",
+    isHex: transaction_data.startsWith("0x")
   });
 
-  console.debug(`Signatures before: ${JSON.stringify(safeTransaction.signatures)}`);
+  const transactions: MetaTransactionData[] = [{
+    to: `0x38A4794cCEd47d3baf7370CcC43B560D3a1beEFA`, // SSV contract address
+    value: '0',
+    data: transaction_data,
+    operation: OperationType.Call
+  }];
+
+  console.debug("Creating transaction with:", {
+    to: transactions[0].to,
+    dataLength: transactions[0].data.length,
+    operation: transactions[0].operation
+  });
+
+  console.debug("Generating transaction...");
+  
+  const createTransactionWithRetry = async (): Promise<SafeTransaction> => {
+    let safeTransaction = await protocolKit.createTransaction({
+      transactions: transactions,
+    });
+
+    const isValidTx = await protocolKit.isValidTransaction(
+      safeTransaction,
+    )
+
+    if (!isValidTx) {
+      throw Error("!!!!!!:::: Transaction is invalid");
+    }
+
+    return safeTransaction;
+  };
+
+  const retryOptions: RetryOptions = {
+    retries: 5,
+    factor: 2,
+    minTimeout: 1000,
+    maxTimeout: 10000,
+    randomize: true,
+  };
+
+  let safeTransaction: SafeTransaction;
+  try {
+    safeTransaction = await retryWithExponentialBackoff<SafeTransaction>(
+      createTransactionWithRetry,
+      retryOptions
+    );
+  } catch (error) {
+    console.error("Failed to create valid transaction after retries:", error);
+    throw error;
+  }
+
+  console.debug(`Signatures before: ${JSON.stringify({
+    ...safeTransaction,
+    data: { ...safeTransaction.data, data: safeTransaction.data.data.substring(0, 5) + '...' }
+  })}`);
   console.debug(`Signing transaction...`)
 
-  // three different ways in which the tx should be signed
-  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction)
-  // on-chain approval:
-  const approveTxResponse = await protocolKit.approveTransactionHash(
-    safeTxHash
-  );
-  // adding a signatures to the tx
-  safeTransaction = await protocolKit.signTransaction(safeTransaction);
+  // Get the transaction hash
+  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
+  
+  // Get the signer address
+  const signerAddress = await protocolKit.getAddress();
+  console.debug(`Signer address: ${signerAddress}`);
+  
+  // Approve the transaction hash
+  console.debug("Approving transaction hash...");
+  const approveTxResponse = await protocolKit.approveTransactionHash(safeTxHash);
+  console.debug(`Approval response: ${approveTxResponse.hash}`);
+  const receipt = approveTxResponse.transactionResponse && (await (approveTxResponse.transactionResponse as TransactionResponse).wait())
 
-  const signature = await protocolKit.signHash(safeTxHash)
-  // a different way to add a signature to the tx
-  safeTransaction.addSignature(signature)
+  
+  // Check if the transaction has been approved
+  const ownersWhoApproved = await protocolKit.getOwnersWhoApprovedTx(safeTxHash);
+  console.debug(`Owners who approved after waiting: ${ownersWhoApproved.join(', ')}`);
 
-  // and yet, they don't seem to be working
-  console.debug(`Signatures after: ${JSON.stringify(safeTransaction.signatures)}`);
+  
   return safeTransaction;
 }
 
@@ -89,6 +171,8 @@ export async function checkAndExecuteSignatures(
   const executeTxResponse = await protocolKit.executeTransaction(
     safeTransaction
   );
+
+  const receipt = executeTxResponse.transactionResponse && (await (executeTxResponse.transactionResponse as TransactionResponse).wait())
 
   if (Number(await protocolKit.getChainId()) === 1)
     console.log(
