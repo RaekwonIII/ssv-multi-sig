@@ -413,7 +413,7 @@ export async function getBulkRegistrationTxData(
     index: clusterSnapshot.index.toString(),
     balance: clusterSnapshot.balance.toString()
   };
-  console.log(`Cluster snapshot: ${JSON.stringify(loggableClusterSnapshot)}`);
+  console.log(`Current validator count: ${loggableClusterSnapshot.validatorCount}`);
 
   return transaction.data;
 }
