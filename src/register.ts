@@ -6,7 +6,7 @@ import { createPublicClient, createWalletClient, http, parseEther } from "viem";
 import * as fs from "fs";
 import { privateKeyToAccount } from "viem/accounts";
 import { createValidatorKeys, ValidatorKeys } from "./generate.js";
-import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit } from "./transaction.js";
+import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit, retryWithExponentialBackoff } from "./transaction.js";
 import SSVContract from "../abi/SSVNetwork.json";
 import axios from "axios";
 import { ethers } from "ethers";
@@ -115,7 +115,7 @@ register
         password: process.env.KEYSTORE_PASSWORD,
       });
       
-      console.log(`Done.`)
+      console.log(`Keystores created.`)
       // get the user nonce
       const nonce = Number(
         await sdk.api.getOwnerNonce({ owner: process.env.OWNER_ADDRESS })
@@ -178,6 +178,30 @@ register
       // generate Safe TX
       const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, txData)
       await checkAndExecuteSignatures(safeProtocolKit, multiSigTransaction);
+
+      // Wait for the transaction to be processed and get a new cluster snapshot
+      console.log("Waiting for new cluster snapshot...");
+      let newClusterSnapshot;
+      let retries = 0;
+      const maxRetries = 10;
+      
+      while (retries < maxRetries) {
+        newClusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds);
+        
+        // Check if the validator count has increased
+        if (newClusterSnapshot.validatorCount > formattedClusterSnapshot.validatorCount) {
+          console.log("New cluster snapshot received, continuing with next batch...");
+          break;
+        }
+        
+        console.log("Cluster snapshot not updated yet, waiting...");
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        retries++;
+      }
+
+      if (retries >= maxRetries) {
+        throw new Error("Failed to get updated cluster snapshot after maximum retries");
+      }
 
       totalKeysRegistered += chunkSize;
     }
@@ -282,53 +306,64 @@ export async function getClusterSnapshot(
     active: true,
     balance: 0,
   };
-  try {
-    const query = `
-      query clusterSnapshot($owner: ID!, $operatorIds: [BigInt!]!) {
-        clusters(
-          where: {owner_: {id: $owner}, operatorIds: $operatorIds}
-        ) {
-          validatorCount
-          networkFeeIndex
-          index
-          active
-          balance
-        }
+
+  const query = `
+    query clusterSnapshot($owner: ID!, $operatorIds: [BigInt!]!) {
+      clusters(
+        where: {owner_: {id: $owner}, operatorIds: $operatorIds}
+      ) {
+        validatorCount
+        networkFeeIndex
+        index
+        active
+        balance
       }
-    `;
-    const variables = {
-      owner: owner,
-      operatorIds: operatorIDs,
-    };
+    }
+  `;
+  const variables = {
+    owner: owner,
+    operatorIds: operatorIDs,
+  };
 
-    console.log("GraphQL Query:", query);
-    console.log("Query Variables:", JSON.stringify(variables, null, 2));
+  const retryOptions = {
+    retries: 5,
+    factor: 2,
+    minTimeout: 1000,
+    maxTimeout: 10000,
+    randomize: true,
+  };
 
-    const response = await axios({
-      method: "POST",
-      url:
-        process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/",
-      headers: {
-        "content-type": "application/json",
-      },
-      data: {
-        query,
-        variables,
-      },
-    });
-    if (response.status !== 200) throw Error("Request did not return OK");
+  try {
+    await retryWithExponentialBackoff(async () => {
+      const response = await axios({
+        method: "POST",
+        url:
+          process.env.SUBGRAPH_API ||
+          "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/",
+        headers: {
+          "content-type": "application/json",
+        },
+        data: {
+          query,
+          variables,
+        },
+      });
 
-    if (response.data.data.clusters && response.data.data.clusters.length > 0)
-      clusterSnapshot = response.data.data.clusters[0];
+      if (response.status !== 200) {
+        throw Error("Request did not return OK");
+      }
 
-    console.debug(
-      `Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
-    );
-  } catch (err) {
-    console.error("ERROR DURING AXIOS REQUEST", err);
-  } finally {
+      if (response.data.data.clusters && response.data.data.clusters.length > 0) {
+        clusterSnapshot = response.data.data.clusters[0];
+      } else {
+        throw Error("No cluster data found");
+      }
+    }, retryOptions);
+
     return clusterSnapshot;
+  } catch (err) {
+    console.error("Failed to get cluster snapshot after retries:", err);
+    throw err;
   }
 }
 
@@ -372,8 +407,6 @@ export async function getBulkRegistrationTxData(
     }
   );
 
-  console.log(`==============================================`)
-  // Convert BigInt values to strings for logging
   const loggableClusterSnapshot = {
     ...clusterSnapshot,
     networkFeeIndex: clusterSnapshot.networkFeeIndex.toString(),
@@ -381,7 +414,6 @@ export async function getBulkRegistrationTxData(
     balance: clusterSnapshot.balance.toString()
   };
   console.log(`Cluster snapshot: ${JSON.stringify(loggableClusterSnapshot)}`);
-  console.log(`==============================================`)
 
   return transaction.data;
 }
