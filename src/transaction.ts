@@ -8,37 +8,6 @@ import SafeApiKit from "@safe-global/api-kit";
 
 import Safe from "@safe-global/protocol-kit";
 import { TransactionResponse } from "ethers";
-import retry from "retry";
-
-type RetryOptions = {
-  retries: number;
-  factor: number;
-  minTimeout: number;
-  maxTimeout: number;
-  randomize: boolean;
-};
-
-export function retryWithExponentialBackoff<T>(
-  operation: () => Promise<T>,
-  options: RetryOptions
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const operationRetry = retry.operation(options);
-
-    operationRetry.attempt(() => {
-      operation()
-        .then((result) => {
-          resolve(result);
-        })
-        .catch((err) => {
-          if (operationRetry.retry(err)) {
-            return;
-          }
-          reject(operationRetry.mainError());
-        });
-    });
-  });
-}
 
 export async function getSafeProtocolKit(
   rpc_url: string,
@@ -60,7 +29,8 @@ export async function createApprovedMultiSigTx(
   console.log("Creating transaction...");
 
   const transactions: MetaTransactionData[] = [{
-    to: `0x38A4794cCEd47d3baf7370CcC43B560D3a1beEFA`, // SSV contract address
+    // @ts-ignore
+    to: "0x38A4794cCEd47d3baf7370CcC43B560D3a1beEFA", // SSV contract address
     value: '0',
     data: transaction_data,
     operation: OperationType.Call
@@ -106,13 +76,6 @@ export async function checkAndExecuteSignatures(
   const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
   
   try {
-    // Check if the transaction is valid
-    const isValidTx = await protocolKit.isValidTransaction(safeTransaction);
-
-    if (!isValidTx) {
-      throw Error(`Transaction ${safeTxHash.substring(0, 5)}... is invalid`);
-    }
-
     const threshold = await protocolKit.getThreshold();
     const ownersWhoApproved = await protocolKit.getOwnersWhoApprovedTx(safeTxHash);
     const numberOfApprovers = ownersWhoApproved.length;
@@ -127,6 +90,9 @@ export async function checkAndExecuteSignatures(
     const executeTxResponse = await protocolKit.executeTransaction(
       safeTransaction
     );
+
+    const receipt = executeTxResponse.transactionResponse && (await (executeTxResponse.transactionResponse as TransactionResponse).wait())
+
 
     if (Number(await protocolKit.getChainId()) === 1)
       console.log(

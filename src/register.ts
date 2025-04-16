@@ -6,7 +6,8 @@ import { createPublicClient, createWalletClient, http, parseEther } from "viem";
 import * as fs from "fs";
 import { privateKeyToAccount } from "viem/accounts";
 import { createValidatorKeys, ValidatorKeys } from "./generate.js";
-import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit, retryWithExponentialBackoff } from "./transaction.js";
+import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit } from "./transaction.js";
+import { getClusterSnapshot, retryWithExponentialBackoff } from "./subgraph.js";
 import SSVContract from "../abi/SSVNetwork.json";
 import axios from "axios";
 import { ethers } from "ethers";
@@ -82,6 +83,20 @@ register
       })
     ).sort((a, b) => Number(a.id) - Number(b.id));
 
+    // Log validator counts for each operator
+    console.log("\nOperator validator counts:");
+    operatorsData.forEach(operator => {
+      console.log(`Operator ${operator.id}: ${operator.validatorCount} validators`);
+    });
+    console.log("");
+
+    // Check if any operator has reached the maximum limit
+    const maxedOperator = operatorsData.find(operator => parseInt(operator.validatorCount) >= MAX_VALIDATORS_PER_OPERATOR);
+    if (maxedOperator) {
+      console.log(`Operator ${maxedOperator.id} has reached the maximum limit of ${MAX_VALIDATORS_PER_OPERATOR} validators. Exiting...`);
+      process.exit(0);
+    }
+
     // find the operator with the maximum number of validators, and the value itself
     const maxVcountOperator = operatorsData.reduce(function (prev, current) {
       return prev && prev.validatorCount > current.validatorCount
@@ -89,6 +104,11 @@ register
         : current;
     });
     console.log(`Operator with the most validators registered to it has ${maxVcountOperator.validatorCount} keys`)
+
+    if (parseInt(maxVcountOperator.validatorCount) >= MAX_VALIDATORS_PER_OPERATOR) {
+      console.log("Maximum validator limit (1000) has been reached for at least one operator. Exiting...");
+      process.exit(0);
+    }
 
     if (
       parseInt(maxVcountOperator.validatorCount) + keysCount >
@@ -107,21 +127,25 @@ register
     let totalKeysRegistered = 0;
 
     while (totalKeysRegistered < keysCount) {
-      // generate the maximum number of keys that can be registered in a single transaction
-      console.log(`Creating keystores`)
+      // Calculate how many keys we can register in this batch
+      const remainingKeys = keysCount - totalKeysRegistered;
+      const currentChunkSize = Math.min(chunkSize, remainingKeys);
+      
+      // generate the keys for this batch
+      console.log(`Creating keystores (${currentChunkSize} keys)`)
       const keys = await createValidatorKeys({
-        count: chunkSize,
+        count: currentChunkSize,
         withdrawal: process.env.OWNER_ADDRESS as `0x${string}`,
         password: process.env.KEYSTORE_PASSWORD,
       });
       
       console.log(`Keystores created.`)
-      // get the user nonce
+      // get the user nonce for this batch
       const nonce = Number(
         await sdk.api.getOwnerNonce({ owner: process.env.OWNER_ADDRESS })
       );
       
-      console.log("Initial nonce: ", nonce);
+      console.log("Current nonce: ", nonce);
       
       // split keys into keyshares
       const keysharesPayloads = await sdk.utils.generateKeyShares({
@@ -181,29 +205,30 @@ register
 
       // Wait for the transaction to be processed and get a new cluster snapshot
       console.log("Waiting for new cluster snapshot...");
-      let newClusterSnapshot;
-      let retries = 0;
-      const maxRetries = 10;
       
-      while (retries < maxRetries) {
-        newClusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds);
+      const retryOptions = {
+        retries: 10,
+        factor: 2,
+        minTimeout: 5000,
+        maxTimeout: 30000,
+        randomize: true,
+      };
+
+      if (!process.env.OWNER_ADDRESS) {
+        throw new Error("OWNER_ADDRESS environment variable is not set");
+      }
+
+      await retryWithExponentialBackoff(async () => {
+        const newClusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS!, operatorIds);
         
-        // Check if the validator count has increased
-        if (newClusterSnapshot.validatorCount > formattedClusterSnapshot.validatorCount) {
-          console.log("New cluster snapshot received, continuing with next batch...");
-          break;
+        if (newClusterSnapshot.validatorCount <= formattedClusterSnapshot.validatorCount) {
+          throw new Error("Cluster snapshot not updated yet");
         }
         
-        console.log("Cluster snapshot not updated yet, waiting...");
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        retries++;
-      }
+        console.log("New cluster snapshot received, continuing with next batch...");
+      }, retryOptions);
 
-      if (retries >= maxRetries) {
-        throw new Error("Failed to get updated cluster snapshot after maximum retries");
-      }
-
-      totalKeysRegistered += chunkSize;
+      totalKeysRegistered += currentChunkSize;
     }
   });
 
@@ -287,89 +312,10 @@ export type ShareObject = {
     sharesData: string;
   };
 };
-export type ClusterSnapshot = {
-  validatorCount: number;
-  networkFeeIndex: number;
-  index: number;
-  active: boolean;
-  balance: number;
-};
-
-export async function getClusterSnapshot(
-  owner: string,
-  operatorIDs: number[]
-): Promise<ClusterSnapshot> {
-  let clusterSnapshot: ClusterSnapshot = {
-    validatorCount: 0,
-    networkFeeIndex: 0,
-    index: 0,
-    active: true,
-    balance: 0,
-  };
-
-  const query = `
-    query clusterSnapshot($owner: ID!, $operatorIds: [BigInt!]!) {
-      clusters(
-        where: {owner_: {id: $owner}, operatorIds: $operatorIds}
-      ) {
-        validatorCount
-        networkFeeIndex
-        index
-        active
-        balance
-      }
-    }
-  `;
-  const variables = {
-    owner: owner,
-    operatorIds: operatorIDs,
-  };
-
-  const retryOptions = {
-    retries: 5,
-    factor: 2,
-    minTimeout: 1000,
-    maxTimeout: 10000,
-    randomize: true,
-  };
-
-  try {
-    await retryWithExponentialBackoff(async () => {
-      const response = await axios({
-        method: "POST",
-        url:
-          process.env.SUBGRAPH_API ||
-          "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/",
-        headers: {
-          "content-type": "application/json",
-        },
-        data: {
-          query,
-          variables,
-        },
-      });
-
-      if (response.status !== 200) {
-        throw Error("Request did not return OK");
-      }
-
-      if (response.data.data.clusters && response.data.data.clusters.length > 0) {
-        clusterSnapshot = response.data.data.clusters[0];
-      } else {
-        throw Error("No cluster data found");
-      }
-    }, retryOptions);
-
-    return clusterSnapshot;
-  } catch (err) {
-    console.error("Failed to get cluster snapshot after retries:", err);
-    throw err;
-  }
-}
 
 export async function getBulkRegistrationTxData(
   sharesDataObjectArray: ShareObject[],
-  owner: string,
+  ownerAddress: string,
   signer: ethers.Wallet,
   clusterSnapshot: {
     validatorCount: number;
@@ -378,7 +324,7 @@ export async function getBulkRegistrationTxData(
     active: boolean;
     balance: bigint;
   }
-) {
+): Promise<string> {
   let contract = new ethers.Contract(
     process.env.SSV_CONTRACT || "",
     SSVContract,
@@ -396,6 +342,8 @@ export async function getBulkRegistrationTxData(
   let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
   let amount = ethers.parseEther("10");
 
+  console.log(`Current validator count: ${clusterSnapshot.validatorCount}`);
+
   let transaction = await contract.bulkRegisterValidator.populateTransaction(
     pubkeys,
     operatorIds,
@@ -406,14 +354,6 @@ export async function getBulkRegistrationTxData(
       gasLimit: 3000000, // gas estimation does not work
     }
   );
-
-  const loggableClusterSnapshot = {
-    ...clusterSnapshot,
-    networkFeeIndex: clusterSnapshot.networkFeeIndex.toString(),
-    index: clusterSnapshot.index.toString(),
-    balance: clusterSnapshot.balance.toString()
-  };
-  console.log(`Current validator count: ${loggableClusterSnapshot.validatorCount}`);
 
   return transaction.data;
 }
