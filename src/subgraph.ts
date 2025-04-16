@@ -1,54 +1,24 @@
 import axios from "axios";
-import retry from "retry";
-
-type RetryOptions = {
-  retries: number;
-  factor: number;
-  minTimeout: number;
-  maxTimeout: number;
-  randomize: boolean;
-};
-
-export function retryWithExponentialBackoff<T>(
-  operation: () => Promise<T>,
-  options: RetryOptions
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const operationRetry = retry.operation(options);
-
-    operationRetry.attempt(() => {
-      operation()
-        .then((result) => {
-          resolve(result);
-        })
-        .catch((err) => {
-          if (operationRetry.retry(err)) {
-            return;
-          }
-          reject(operationRetry.mainError());
-        });
-    });
-  });
-}
 
 export type ClusterSnapshot = {
   validatorCount: number;
-  networkFeeIndex: number;
-  index: number;
-  active: boolean;
-  balance: number;
-};
+  networkFeeIndex: bigint,
+  index: bigint,
+  active: boolean,
+  balance: bigint,
+}
 
 export async function getClusterSnapshot(
   owner: string,
   operatorIDs: number[]
 ): Promise<ClusterSnapshot> {
-  const defaultSnapshot: ClusterSnapshot = {
+
+  let clusterSnapshot: ClusterSnapshot = {
     validatorCount: 0,
-    networkFeeIndex: 0,
-    index: 0,
+    networkFeeIndex: BigInt(0),
+    index: BigInt(0),
     active: true,
-    balance: 0,
+    balance: BigInt(0),
   };
 
   const query = `
@@ -85,17 +55,23 @@ export async function getClusterSnapshot(
     });
 
     if (response.status !== 200) {
-      console.error("Request did not return OK");
-      return defaultSnapshot;
+      console.error("Request did not return OK,");
     }
 
     if (response.data.data.clusters && response.data.data.clusters.length > 0) {
-      return response.data.data.clusters[0];
+      const cluster = response.data.data.clusters[0];
+      clusterSnapshot = {
+        validatorCount: Number(cluster.validatorCount),
+        networkFeeIndex: BigInt(cluster.networkFeeIndex),
+        index: BigInt(cluster.index),
+        active: cluster.active,
+        balance: BigInt(cluster.balance),
+      }
     }
 
-    return defaultSnapshot;
+    return clusterSnapshot;
   } catch (err) {
     console.error("Error getting cluster snapshot:", err);
-    return defaultSnapshot;
+    return clusterSnapshot;
   }
 }

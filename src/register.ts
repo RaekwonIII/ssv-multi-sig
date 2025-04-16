@@ -1,15 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Command } from "commander";
 import { SSVSDK, chains } from "@ssv-labs/ssv-sdk";
-import { createClusterId } from '@ssv-labs/ssv-sdk/utils'
 import { createPublicClient, createWalletClient, http, parseEther } from "viem";
-import * as fs from "fs";
 import { privateKeyToAccount } from "viem/accounts";
-import { createValidatorKeys, ValidatorKeys } from "./generate.js";
+import { createValidatorKeys } from "./generate.js";
 import { checkAndExecuteSignatures, createApprovedMultiSigTx, getSafeProtocolKit } from "./transaction.js";
-import { getClusterSnapshot, retryWithExponentialBackoff } from "./subgraph.js";
-import SSVContract from "../abi/SSVNetwork.json";
-import axios from "axios";
+import { ClusterSnapshot, getClusterSnapshot } from "./subgraph.js";
+import { commaSeparatedList, getBulkRegistrationTxData, retryWithExponentialBackoff, ShareObject, writeKeysToFiles } from "./utils.js";
 import { ethers } from "ethers";
 
 import * as dotenv from "dotenv";
@@ -124,7 +121,12 @@ register
       );
     }
 
+    // need to initialize these
     let totalKeysRegistered = 0;
+    let nonce = Number(await sdk.api.getOwnerNonce({ owner: process.env.OWNER_ADDRESS }));
+    let expectedNonce = nonce;
+    // let clusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds)
+    // let expectedValidatorCount = clusterSnapshot.validatorCount
 
     while (totalKeysRegistered < keysCount) {
       // Calculate how many keys we can register in this batch
@@ -140,10 +142,16 @@ register
       });
       
       console.log(`Keystores created.`)
-      // get the user nonce for this batch
-      const nonce = Number(
-        await sdk.api.getOwnerNonce({ owner: process.env.OWNER_ADDRESS })
-      );
+
+      // get the user nonce for batch 1 onwards
+      if (totalKeysRegistered != 0 ) {
+        await retryWithExponentialBackoff(verifyUpdatedNonce, {sdk: SSVSDK, nonce, expectedNonce, ownerAddress: process.env.SAFE_ADDRESS}, {
+          retries: 3,
+          factor: 2,
+          maxTimeout: 10000,
+          maxRetryTime: 5000,
+        })
+      }
       
       console.log("Current nonce: ", nonce);
       
@@ -179,181 +187,55 @@ register
         }
       }));
 
-      const clusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds)
-      
-      if (!clusterSnapshot) {
-        throw new Error("Failed to get cluster snapshot");
-      }
-      
-      // Format cluster snapshot according to contract requirements
-      const formattedClusterSnapshot = {
-        validatorCount: Number(clusterSnapshot.validatorCount || 0),
-        networkFeeIndex: BigInt(clusterSnapshot.networkFeeIndex || 0),
-        index: BigInt(clusterSnapshot.index || 0),
-        active: clusterSnapshot.active || false,
-        balance: BigInt(clusterSnapshot.balance || 0)
-      }
-      
+      let clusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds)
+      // get the user nonce for batch 1 onwards
+      // if (totalKeysRegistered != 0 ) {
+      //   await retryWithExponentialBackoff(verifyUpdatedClusterSnapshot, {clusterSnapshot, expectedValidatorCount, ownerAddress: process.env.OWNER_ADDRESS, operatorIds}, {
+      //     retries: 3,
+      //     factor: 2,
+      //     maxTimeout: 10000,
+      //     maxRetryTime: 5000,
+      //   })
+      // }
       // Convert walletClient to ethers Wallet
       const ethersWallet = new ethers.Wallet(private_key, new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT));
       
-      let txData = await getBulkRegistrationTxData(shareObjects, process.env.OWNER_ADDRESS, ethersWallet, formattedClusterSnapshot)
+      let txData = await getBulkRegistrationTxData(shareObjects, process.env.OWNER_ADDRESS, ethersWallet, clusterSnapshot)
 
       // generate Safe TX
       const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, txData)
       await checkAndExecuteSignatures(safeProtocolKit, multiSigTransaction);
 
-      // Wait for the transaction to be processed and get a new cluster snapshot
-      console.log("Waiting for new cluster snapshot...");
-      
-      const retryOptions = {
-        retries: 10,
-        factor: 2,
-        minTimeout: 5000,
-        maxTimeout: 30000,
-        randomize: true,
-      };
-
-      if (!process.env.OWNER_ADDRESS) {
-        throw new Error("OWNER_ADDRESS environment variable is not set");
-      }
-
-      await retryWithExponentialBackoff(async () => {
-        const newClusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS!, operatorIds);
-        
-        if (newClusterSnapshot.validatorCount <= formattedClusterSnapshot.validatorCount) {
-          throw new Error("Cluster snapshot not updated yet");
-        }
-        
-        console.log("New cluster snapshot received, continuing with next batch...");
-      }, retryOptions);
-
       totalKeysRegistered += currentChunkSize;
+      expectedNonce = nonce + currentChunkSize;
     }
   });
 
-function writeKeysToFiles(keys: ValidatorKeys, keysharesPayloads: unknown, outputPath: string): void {
-  // write seed phrase
-  fs.writeFile(
-    `${outputPath}/master-${keys.masterSKHash}`,
-    keys.masterSK.toString(),
-    (err) => {
-      if (err) {
-        console.error("Failed to write to file: ", err);
-      } else {
-        console.log(`Seed phrase saved to file`);
-      }
+  async function verifyUpdatedNonce(options: {sdk: SSVSDK, nonce:number, expectedNonce: number, ownerAddress: string}) {
+    var {sdk, nonce, expectedNonce, ownerAddress} = options
+    // update nonce
+    console.info(`Obtaining owner nonce`);
+    nonce = Number(await sdk.api.getOwnerNonce({ owner: ownerAddress }));
+    console.info(`Owner nonce: ${nonce}`);
+    // expected to be the same on first loop, but important on following ones
+    if (nonce !== expectedNonce) {
+      console.error(
+        "Nonce has not been updated since last successful transaction, retrying"
+      );
+      throw Error("Nonce has not been updated since last successful transaction! Exiting")
     }
-  );
-
-  // write deposit file
-  fs.writeFile(
-    `${outputPath}/deposit_data-${keys.masterSKHash}.json`,
-    JSON.stringify(keys.deposit_data),
-    (err) => {
-      if (err) {
-        console.error("Failed to write to file: ", err);
-      } else {
-        console.log(`Deposit data saved to file`);
-      }
-    }
-  );
-  
-  // write keyshares file
-  fs.writeFile(
-    `${outputPath}/keyshares-${keys.masterSKHash}.json`,
-    JSON.stringify(keysharesPayloads),
-    (err) => {
-      if (err) {
-        console.error("Failed to write to file: ", err);
-      } else {
-        console.log(`Keyshares saved to file`);
-      }
-    }
-  );
-  // write keystores
-  for (const [i, keyshare] of keys.keystores.entries()) {
-    const KEYSTORE_FILEPATH_TEMPLATE = `${outputPath}/keystore-m_12381_3600_${i}_0_0-${keys.masterSKHash}.json`;
-    
-    const keyshareString = JSON.stringify(keyshare);
-    // Save the error message to a local file
-    fs.writeFile(KEYSTORE_FILEPATH_TEMPLATE, keyshareString, (err) => {
-      if (err) {
-        console.error("Failed to write to file: ", err);
-      } else {
-        // console.log(`Operators saved to file: ${outputPath}`);
-      }
-    });
   }
-  console.log(`Keystores files saved: ${outputPath}`);
-}
 
-function commaSeparatedList(value: string, _dummyPrevious: unknown) {
-  return value.split(",").map((item: string) => parseInt(item));
-}
-
-
-export type ShareObject = {
-  keySharesFilePath: string;
-  data: {
-    ownerNonce: number;
-    ownerAddress: string;
-    publicKey: string;
-    operators: [
-      {
-        id: number;
-        operatorKey: string;
-      }
-    ];
-  };
-  payload: {
-    publicKey: string;
-    operatorIds: number[];
-    sharesData: string;
-  };
-};
-
-export async function getBulkRegistrationTxData(
-  sharesDataObjectArray: ShareObject[],
-  ownerAddress: string,
-  signer: ethers.Wallet,
-  clusterSnapshot: {
-    validatorCount: number;
-    networkFeeIndex: bigint;
-    index: bigint;
-    active: boolean;
-    balance: bigint;
-  }
-): Promise<string> {
-  let contract = new ethers.Contract(
-    process.env.SSV_CONTRACT || "",
-    SSVContract,
-    signer
-  );
-
-  let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.publicKey;
-  });
-
-  let sharesData = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.sharesData;
-  });
-
-  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
-  let amount = ethers.parseEther("10");
-
-  console.log(`Current validator count: ${clusterSnapshot.validatorCount}`);
-
-  let transaction = await contract.bulkRegisterValidator.populateTransaction(
-    pubkeys,
-    operatorIds,
-    sharesData,
-    amount,
-    clusterSnapshot,
-    {
-      gasLimit: 3000000, // gas estimation does not work
-    }
-  );
-
-  return transaction.data;
-}
+  // async function verifyUpdatedClusterSnapshot(options: {clusterSnapshot: ClusterSnapshot, expectedValidatorCount: number, ownerAddress: string, operatorIds: number[]}) {
+  //   var {clusterSnapshot, expectedValidatorCount, ownerAddress, operatorIds} = options
+  //   // update nonce
+  //   console.info(`Obtaining owner nonce`);
+  //   clusterSnapshot = await getClusterSnapshot(ownerAddress, operatorIds);
+  //   // expected to be the same on first loop, but important on following ones
+  //   if (clusterSnapshot.validatorCount !== expectedValidatorCount) {
+  //     console.error(
+  //       "Cluster snapshot has not been updated since last successful transaction, retrying"
+  //     );
+  //     throw Error("Cluster snapshot has not been updated since last successful transaction, retrying")
+  //   }
+  // }
