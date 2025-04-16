@@ -30,7 +30,7 @@ export async function createApprovedMultiSigTx(
 
   const transactions: MetaTransactionData[] = [{
     // @ts-ignore
-    to: "0x38A4794cCEd47d3baf7370CcC43B560D3a1beEFA", // SSV contract address
+    to: process.env.SSV_CONTRACT, // SSV contract address
     value: '0',
     data: transaction_data,
     operation: OperationType.Call
