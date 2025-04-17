@@ -125,8 +125,6 @@ register
     let totalKeysRegistered = 0;
     let nonce = Number(await sdk.api.getOwnerNonce({ owner: process.env.OWNER_ADDRESS }));
     let expectedNonce = nonce;
-    // let clusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds)
-    // let expectedValidatorCount = clusterSnapshot.validatorCount
 
     while (totalKeysRegistered < keysCount) {
       // Calculate how many keys we can register in this batch
@@ -188,16 +186,7 @@ register
       }));
 
       let clusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds)
-      // get the user nonce for batch 1 onwards
-      // if (totalKeysRegistered != 0 ) {
-      //   await retryWithExponentialBackoff(verifyUpdatedClusterSnapshot, {clusterSnapshot, expectedValidatorCount, ownerAddress: process.env.OWNER_ADDRESS, operatorIds}, {
-      //     retries: 3,
-      //     factor: 2,
-      //     maxTimeout: 10000,
-      //     maxRetryTime: 5000,
-      //   })
-      // }
-      // Convert walletClient to ethers Wallet
+
       const ethersWallet = new ethers.Wallet(private_key, new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT));
       
       let txData = await getBulkRegistrationTxData(shareObjects, process.env.OWNER_ADDRESS, ethersWallet, clusterSnapshot)
@@ -225,17 +214,3 @@ register
       throw Error("Nonce has not been updated since last successful transaction! Exiting")
     }
   }
-
-  // async function verifyUpdatedClusterSnapshot(options: {clusterSnapshot: ClusterSnapshot, expectedValidatorCount: number, ownerAddress: string, operatorIds: number[]}) {
-  //   var {clusterSnapshot, expectedValidatorCount, ownerAddress, operatorIds} = options
-  //   // update nonce
-  //   console.info(`Obtaining owner nonce`);
-  //   clusterSnapshot = await getClusterSnapshot(ownerAddress, operatorIds);
-  //   // expected to be the same on first loop, but important on following ones
-  //   if (clusterSnapshot.validatorCount !== expectedValidatorCount) {
-  //     console.error(
-  //       "Cluster snapshot has not been updated since last successful transaction, retrying"
-  //     );
-  //     throw Error("Cluster snapshot has not been updated since last successful transaction, retrying")
-  //   }
-  // }

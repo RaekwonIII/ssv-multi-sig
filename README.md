@@ -1,15 +1,28 @@
-# ssv-multi-sig
+# SSV Multi-sig bulk registration script
 
+# Steps to use:
 
-## Dependencies installation
+## 1. Clone repo 
 
-Install bun by running this command:
+``` bash
+git clone https://github.com/RaekwonIII/ssv-multi-sig.git
+cd ssv-multi-sig
+```
+## 2. Install dependencies
 
-```sh
+Install packages by running this command:
+
+```bash
 npm install
 ```
 
-### Environment variables
+### 3. Set environment variables
+
+Create a .env file in the top level of the directory, you can copy the example file with:
+
+```bash
+cp .env.example .env
+```
 
 The `register` command needs the following environment variables to be set:
 
@@ -30,9 +43,11 @@ KEYSTORE_PASSWORD=
 SAFE_ADDRESS=
 # URL of the safe transaction service. Can be left empty to use default (mainnet)
 TX_SERVICE= # e.g. https://safe-transaction-mainnet.safe.global/ or https://transaction-holesky.holesky-safe.protofire.io/
+# URL of the subgraph API which is chain dependent 
+SUBGRAPH_API= # e.g. https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/
 ```
 
-## Usage
+## 4. Create and register validators
 
 To run the tool, launch the command:
 
