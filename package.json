@@ -1,43 +1,43 @@
 {
-  "name": "ssv-automate",
-  "module": "index.ts",
-  "type": "module",
-  "devDependencies": {
-    "@types/retry": "^0.12.5",
-    "bun-types": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
-  },
-  "dependencies": {
-    "@safe-global/api-kit": "^2.3.0",
-    "@types/commander": "^2.12.2",
-    "@types/figlet": "^1.5.8",
-    "@types/node": "^20.9.0",
-    "axios": "^1.6.1",
-    "axios-rate-limit": "^1.3.0",
-    "bls-eth-wasm": "^1.2.1",
-    "commander": "^11.1.0",
-    "ethers": "^6.12.0",
-    "exec": "^0.2.1",
-    "figlet": "^1.7.0",
-    "glob": "^10.3.10",
-    "ora": "^7.0.1",
-    "retry": "^0.13.1",
-    "ssv-keys": "github:bloxapp/ssv-keys",
-    "web3": "^4.2.2"
-  },
-  "description": "To install dependencies:",
+  "name": "playground",
   "version": "1.0.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/RaekwonIII/ssv-etherfi.git"
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsc && node dist/index.js",
+    "registerValidators": "node --loader ts-node/esm --experimental-strip-types --no-warnings=ExperimentalWarning src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "Massimo Luraschi",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/RaekwonIII/ssv-etherfi/issues"
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@eslint/js": "^9.23.0",
+    "@types/retry": "^0.12.5",
+    "eslint": "^9.23.0",
+    "globals": "^16.0.0",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.29.0"
   },
-  "homepage": "https://github.com/RaekwonIII/ssv-etherfi#readme"
+  "dependencies": {
+    "@chainsafe/bls-keygen": "^0.4.0",
+    "@chainsafe/bls-keystore": "^3.1.0",
+    "@chainsafe/blst": "^2.2.0",
+    "@chainsafe/ssz": "^1.2.0",
+    "@lodestar/params": "^1.28.1",
+    "@lodestar/state-transition": "^1.28.1",
+    "@lodestar/types": "^1.28.1",
+    "@safe-global/api-kit": "^3.0.1",
+    "@safe-global/protocol-kit": "^6.0.2",
+    "@safe-global/safe-core-sdk-types": "^5.1.0",
+    "@ssv-labs/ssv-sdk": "^0.0.7",
+    "@types/commander": "^2.12.0",
+    "@types/node": "^22.13.16",
+    "axios": "^1.8.4",
+    "commander": "^13.1.0",
+    "ethers": "^6.13.5",
+    "glob": "^11.0.1",
+    "retry": "^0.13.1"
+  }
 }

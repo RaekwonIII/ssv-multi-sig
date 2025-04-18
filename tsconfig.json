@@ -1,23 +1,16 @@
 {
-  "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "esnext",
-    "target": "esnext",
-    "moduleResolution": "bundler",
-    "moduleDetection": "force",
-    "allowImportingTsExtensions": true,
-    "noEmit": true,
-    "composite": true,
-    "strict": true,
-    "downlevelIteration": true,
-    "skipLibCheck": true,
-    "jsx": "react-jsx",
-    "allowSyntheticDefaultImports": true,
-    "forceConsistentCasingInFileNames": true,
-    "allowJs": true,
-    "types": [
-      "bun-types" // add Bun global
-    ]
-  },
-  "include": ["src/**/*", "tests/**/*", "abi/*.json"]
-}
+    "compilerOptions": {
+      "target": "es2022",
+      "module": "nodenext",
+      "lib": ["es2022"],
+      "moduleResolution": "nodenext",
+      "strict": true,
+      "esModuleInterop": true,
+      "skipLibCheck": true,
+      "forceConsistentCasingInFileNames": true,
+      "outDir": "./dist",
+      "rootDir": "./src",
+      "sourceMap": true,
+      "resolveJsonModule": true
+    },
+  }

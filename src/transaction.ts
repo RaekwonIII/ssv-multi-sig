@@ -1,142 +1,111 @@
-import { ethers } from "ethers";
-import { getClusterSnapshot } from "./subgraph";
 import {
   MetaTransactionData,
   OperationType,
   SafeTransaction,
 } from "@safe-global/safe-core-sdk-types";
 
-import SSVContract from "../abi/SSVNetwork.json";
+import SafeApiKit from "@safe-global/api-kit";
+
 import Safe from "@safe-global/protocol-kit";
-import { ShareObject } from "./utils";
-import { EthersAdapter } from "@safe-global/protocol-kit";
+import { TransactionResponse } from "ethers";
 
-export async function getSignerandAdapter(endpoint:string, privateKey: string) {
-    const provider = new ethers.JsonRpcProvider(endpoint);
-    const signer = new ethers.Wallet(privateKey, provider);
-    const ethAdapter = new EthersAdapter({
-      ethers,
-      signerOrProvider: signer,
-    });
-    return {
-        signer: signer,
-        adapter: ethAdapter,
-    }
-}
-
-export async function getBulkRegistrationTxData(
-  sharesDataObjectArray: ShareObject[],
-  owner: string,
-  signer: ethers.Wallet
-) {
-  let contract = new ethers.Contract(
-    process.env.SSV_CONTRACT || "",
-    SSVContract,
-    signer
-  );
-
-  let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.publicKey;
+export async function getSafeProtocolKit(
+  rpc_url: string,
+  signer: string,
+  safe_address: string
+): Promise<Safe> {
+  const protocolKit = await Safe.init({
+    provider: rpc_url,
+    signer: signer,
+    safeAddress: safe_address,
   });
-
-  let sharesData = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.sharesData;
-  });
-
-  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
-  let amount = ethers.parseEther("10");
-  const clusterSnapshot = await getClusterSnapshot(owner, operatorIds);
-
-  let transaction = await contract.bulkRegisterValidator.populateTransaction(
-    pubkeys,
-    operatorIds,
-    sharesData,
-    amount,
-    clusterSnapshot,
-    {
-      gasLimit: 3000000, // gas estimation does not work
-    }
-  );
-
-  return transaction.data;
+  return protocolKit;
 }
 
 export async function createApprovedMultiSigTx(
-  ethAdapter: EthersAdapter,
+  protocolKit: Safe,
   transaction_data: string
 ) {
-  // Create Safe instance
-  let protocolKit = await Safe.create({
-    ethAdapter,
-    safeAddress: `${process.env.SAFE_ADDRESS}`,
-  });
+  console.log("Creating transaction...");
 
-  // Create transaction
-  const safeTransactionData: MetaTransactionData = {
-    to: `${process.env.SSV_CONTRACT}`,
-    value: "0",
+  const transactions: MetaTransactionData[] = [{
+    // @ts-ignore
+    to: process.env.SSV_CONTRACT, // SSV contract address
+    value: '0',
     data: transaction_data,
-    operation: OperationType.Call,
-  };
+    operation: OperationType.Call
+  }];
 
-  return await protocolKit.createTransaction({
-    transactions: [safeTransactionData],
+  let safeTransaction = await protocolKit.createTransaction({
+    transactions: transactions,
   });
+
+  const isValidTx = await protocolKit.isValidTransaction(
+    safeTransaction,
+  )
+
+  if (!isValidTx) {
+    throw Error("Transaction is invalid");
+  }
+
+  // Get the transaction hash
+  const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
+  
+  // Get the signer address
+  const signerAddress = await protocolKit.getAddress();
+  console.log(`Signing transaction with address: ${signerAddress}`);
+  
+  // Approve the transaction hash
+  const approveTxResponse = await protocolKit.approveTransactionHash(safeTxHash);
+  console.log(`Transaction approved: ${approveTxResponse.hash}`);
+  
+  const receipt = approveTxResponse.transactionResponse && (await (approveTxResponse.transactionResponse as TransactionResponse).wait())
+  
+  // Check if the transaction has been approved
+  const ownersWhoApproved = await protocolKit.getOwnersWhoApprovedTx(safeTxHash);
+  console.log(`Owners who approved: ${ownersWhoApproved.join(', ')}`);
+  
+  return safeTransaction;
 }
 
 export async function checkAndExecuteSignatures(
-  ethAdapter: EthersAdapter,
+  protocolKit: Safe,
   safeTransaction: SafeTransaction
 ) {
-  // Create Safe instance
-  const protocolKit = await Safe.create({
-    ethAdapter,
-    safeAddress: `${process.env.SAFE_ADDRESS}`,
-  });
-
-  console.debug("Validating transaction...");
+  console.log("Validating transaction...");
   const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
-  const isValidTx = await protocolKit.isValidTransaction(safeTransaction);
   
-  if (!isValidTx)
-    throw Error(
-      `Transaction ${safeTxHash} is deemed invalid by the SDK, please verify this transaction data: \n${safeTransaction.data.data}`
+  try {
+    const threshold = await protocolKit.getThreshold();
+    const ownersWhoApproved = await protocolKit.getOwnersWhoApprovedTx(safeTxHash);
+    const numberOfApprovers = ownersWhoApproved.length;
+
+    if (numberOfApprovers < threshold) {
+      throw Error(
+        `Approval threshold is ${threshold}, and only ${numberOfApprovers} have been made, transaction ${safeTxHash.substring(0, 5)}... cannot be executed.`
+      );
+    }
+
+    console.log("Executing transaction...");
+    const executeTxResponse = await protocolKit.executeTransaction(
+      safeTransaction
     );
 
-  console.debug("Transaction is valid.");
-  console.debug("Signing transaction...");
-  const approveTxResponse = await protocolKit.approveTransactionHash(
-    safeTxHash
-  );
-  await approveTxResponse.transactionResponse?.wait();
-  console.debug("Transaction signed.");
+    const receipt = executeTxResponse.transactionResponse && (await (executeTxResponse.transactionResponse as TransactionResponse).wait())
 
-  const threshold = await protocolKit.getThreshold();
-  const numberOfApprovers = (
-    await protocolKit.getOwnersWhoApprovedTx(safeTxHash)
-  ).length;
 
-  if (numberOfApprovers < threshold) {
-    throw Error(
-      `Approval threshold is ${threshold}, and only ${numberOfApprovers} have been made, transaction ${safeTxHash} cannot be executed.`
-    );
+    if (Number(await protocolKit.getChainId()) === 1)
+      console.log(
+        "Transaction executed: https://etherscan.io/tx/" + executeTxResponse?.hash
+      );
+    else
+      console.log(
+        "Transaction executed: https://holesky.etherscan.io/tx/" +
+          executeTxResponse?.hash
+      );
+    return executeTxResponse?.hash;
+  } catch (error) {
+    console.error(`Error in checkAndExecuteSignatures: ${error}`);
+    throw error;
   }
-
-  console.debug("Approval threshold reached, executing transaction...");
-  const executeTxResponse = await protocolKit.executeTransaction(
-    safeTransaction
-  );
-  const receipt =
-    executeTxResponse.transactionResponse &&
-    (await executeTxResponse.transactionResponse.wait());
-
-  if (Number(await protocolKit.getChainId()) === 1)
-    console.log(
-      "Transaction executed: https://etherscan.io/tx/" + receipt?.hash
-    );
-  else
-    console.log(
-      "Transaction executed: https://holesky.etherscan.io/tx/" + receipt?.hash
-    );
-  return receipt?.hash;
 }

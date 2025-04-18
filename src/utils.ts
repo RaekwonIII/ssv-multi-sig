@@ -1,14 +1,8 @@
-import { readFileSync } from "fs";
-import { glob } from "glob";
-import * as retry from "retry"
-
-export type ClusterSnapshot = {
-  validatorCount: number;
-  networkFeeIndex: number;
-  index: number;
-  active: boolean;
-  balance: number;
-};
+import retry from "retry";
+import * as fs from "fs";
+import { ValidatorKeys } from "./generate";
+import { ethers } from "ethers";
+import SSVContract from "../abi/SSVNetwork.json";
 
 export type ShareObject = {
   keySharesFilePath: string;
@@ -30,72 +24,134 @@ export type ShareObject = {
   };
 };
 
-// generator function to split the list of keyshares into chunks
-// this is needed because there is a limit on the number of public keys
-// that can be added to a bulk transaction
-export function* chunks<T>(arr: T[], n: number): Generator<T[], void> {
-  for (let i = 0; i < arr.length; i += n) {
-    yield arr.slice(i, i + n);
-  }
-}
-
-export function commaSeparatedList(
-  value: string,
-  dummyPrevious: any
-): string[] {
-  return value.split(",");
-}
-
-export async function getKeyshareObjects(
-  dir: string
-): Promise<Array<ShareObject>> {
-  let keyshareFilesPathList = await glob(`${dir}/**/keyshares**.json`, {
-    nodir: true,
-  });
-  console.info(
-    `\nFound ${keyshareFilesPathList.length} keyshares files in ${dir} folder`
-  );
-  let keysharesObjectsList: Array<ShareObject> = [];
-  keyshareFilesPathList.map((keyshareFilePath) => {
-    let shares: ShareObject[] = JSON.parse(
-      readFileSync(keyshareFilePath, "utf-8")
-    ).shares;
-    // Enrich the shares object with the keyshares file it was found in
-    let enrichedShares = shares.map((share) => {
-      share.keySharesFilePath = keyshareFilePath;
-      return share;
-    });
-    keysharesObjectsList.push(...enrichedShares);
-  });
-  
-  // order by nonce
-  keysharesObjectsList.sort((a, b) => a.data.ownerNonce - b.data.ownerNonce);
-
-  return keysharesObjectsList;
-}
-
-export function debug(args: any) {
-
-  if (process.env.DEBUG) {
-    console.debug(args);
-  }
-}
-
-export function retryWithExponentialBackoff(operation: (operationOptions: any) => Promise<any>, operationOptions: any, options: any) {
+export function retryWithExponentialBackoff<T>(
+  operation: (operationOptions: any) => Promise<T>,
+  operationOptions: any,
+  options: any
+): Promise<T> {
   return new Promise((resolve, reject) => {
-    const operationRetry = retry.operation(options)
+    const operationRetry = retry.operation(options);
 
     operationRetry.attempt(() => {
       operation(operationOptions)
         .then((result) => {
-          resolve(result)
+          resolve(result);
         })
         .catch((err) => {
           if (operationRetry.retry(err)) {
-            return
+            return;
           }
-          reject(operationRetry.mainError())
-        })
-    })
-  })
+          reject(operationRetry.mainError());
+        });
+    });
+  });
+}
+
+export function writeKeysToFiles(
+  keys: ValidatorKeys,
+  keysharesPayloads: unknown,
+  outputPath: string
+): void {
+  // write seed phrase
+  fs.writeFile(
+    `${outputPath}/master-${keys.masterSKHash}`,
+    keys.masterSK.toString(),
+    (err) => {
+      if (err) {
+        console.error("Failed to write to file: ", err);
+      } else {
+        console.log(`Seed phrase saved to file`);
+      }
+    }
+  );
+
+  // write deposit file
+  fs.writeFile(
+    `${outputPath}/deposit_data-${keys.masterSKHash}.json`,
+    JSON.stringify(keys.deposit_data),
+    (err) => {
+      if (err) {
+        console.error("Failed to write to file: ", err);
+      } else {
+        console.log(`Deposit data saved to file`);
+      }
+    }
+  );
+
+  // write keyshares file
+  fs.writeFile(
+    `${outputPath}/keyshares-${keys.masterSKHash}.json`,
+    JSON.stringify(keysharesPayloads),
+    (err) => {
+      if (err) {
+        console.error("Failed to write to file: ", err);
+      } else {
+        console.log(`Keyshares saved to file`);
+      }
+    }
+  );
+  // write keystores
+  for (const [i, keyshare] of keys.keystores.entries()) {
+    const KEYSTORE_FILEPATH_TEMPLATE = `${outputPath}/keystore-m_12381_3600_${i}_0_0-${keys.masterSKHash}.json`;
+
+    const keyshareString = JSON.stringify(keyshare);
+    // Save the error message to a local file
+    fs.writeFile(KEYSTORE_FILEPATH_TEMPLATE, keyshareString, (err) => {
+      if (err) {
+        console.error("Failed to write to file: ", err);
+      } else {
+        // console.log(`Operators saved to file: ${outputPath}`);
+      }
+    });
+  }
+  console.log(`Keystores files saved: ${outputPath}`);
+}
+
+export async function getBulkRegistrationTxData(
+  sharesDataObjectArray: ShareObject[],
+  ownerAddress: string,
+  signer: ethers.Wallet,
+  clusterSnapshot: {
+    validatorCount: number;
+    networkFeeIndex: bigint;
+    index: bigint;
+    active: boolean;
+    balance: bigint;
+  }
+): Promise<string> {
+  let contract = new ethers.Contract(
+    process.env.SSV_CONTRACT || "",
+    SSVContract,
+    signer
+  );
+
+  let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
+    return keyshareObj.payload.publicKey;
+  });
+
+  let sharesData = sharesDataObjectArray.map((keyshareObj) => {
+    return keyshareObj.payload.sharesData;
+  });
+
+  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
+  let amount = ethers.parseEther("10");
+
+  console.log(`Current validator count: ${clusterSnapshot.validatorCount}`);
+
+  let transaction = await contract.bulkRegisterValidator.populateTransaction(
+    pubkeys,
+    operatorIds,
+    sharesData,
+    amount,
+    clusterSnapshot,
+    {
+      gasLimit: 3000000, // gas estimation does not work
+    }
+  );
+
+  return transaction.data;
+}
+
+export function commaSeparatedList(value: string, _dummyPrevious: unknown) {
+  return value.split(",").map((item: string) => parseInt(item));
 }

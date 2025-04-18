@@ -1,165 +1,77 @@
 import axios from "axios";
-import { ClusterSnapshot } from "./utils";
 
-export async function getOwnerNonceFromSubgraph(
-  owner: string
-): Promise<number> {
-  let nonce = 0;
-  try {
-    const response = await axios({
-      method: "POST",
-      url:
-        process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
-      headers: {
-        "content-type": "application/json",
-      },
-      data: {
-        query: `
-            query accountNonce($owner: ID!) {
-              account(id: $owner) {
-                  nonce
-              }
-          }`,
-        variables: { owner: owner },
-      },
-    });
-    if (response.status !== 200) throw Error("Request did not return OK");
-    if (response.data.data.account)
-      nonce = Number(response.data.data.account.nonce);
-
-  } catch (err) {
-    console.error("ERROR DURING AXIOS REQUEST", err);
-  } finally {
-    return nonce;
-  }
+export type ClusterSnapshot = {
+  validatorCount: number;
+  networkFeeIndex: bigint,
+  index: bigint,
+  active: boolean,
+  balance: bigint,
 }
 
 export async function getClusterSnapshot(
   owner: string,
   operatorIDs: number[]
 ): Promise<ClusterSnapshot> {
+
   let clusterSnapshot: ClusterSnapshot = {
     validatorCount: 0,
-    networkFeeIndex: 0,
-    index: 0,
+    networkFeeIndex: BigInt(0),
+    index: BigInt(0),
     active: true,
-    balance: 0,
+    balance: BigInt(0),
   };
-  try {
-    const response = await axios({
-      method: "POST",
-      url:
-        process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
-      headers: {
-        "content-type": "application/json",
-      },
-      data: {
-        query: `
-              query clusterSnapshot($owner: ID!, $operatorIds: [BigInt!]!) {
-                clusters(
-                  where: {owner_: {id: $owner}, operatorIds: $operatorIds}
-                ) {
-                  validatorCount
-                  networkFeeIndex
-                  index
-                  active
-                  balance
-                }
-              }
-              `,
-        variables: {
-          owner: owner,
-          operatorIds: operatorIDs,
-        },
-      },
-    });
-    if (response.status !== 200) throw Error("Request did not return OK");
 
-    if (response.data.data.clusters && response.data.data.clusters.length > 0)
-      clusterSnapshot = response.data.data.clusters[0];
-
-    console.debug(
-      `Cluster snapshot: { validatorCount: ${clusterSnapshot.validatorCount}, networkFeeIndex: ${clusterSnapshot.networkFeeIndex}, index: ${clusterSnapshot.index}, active: ${clusterSnapshot.active}, balance: ${clusterSnapshot.balance},}`
-    );
-  } catch (err) {
-    console.error("ERROR DURING AXIOS REQUEST", err);
-  } finally {
-    return clusterSnapshot;
-  }
-}
-
-export async function getRegisteredPubkeys(pubkeys: string[]): Promise<string[]> {
-  let registeredPubkeys: string[] = [];
-  try {
-    const response = await axios({
-      method: "POST",
-      url:
-        process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
-      headers: {
-        "content-type": "application/json",
-      },
-      data: {
-        query: `
-            query getRegisteredPubkeys($pubkeys: [Bytes!]) {
-                validators(where: {id_in: $pubkeys, removed: false}, first: 1000) {
-                    id
-                }
-            }`,
-        variables: { pubkeys: pubkeys },
-      },
-    });
-    if (response.status !== 200) throw Error("Request did not return OK");
-    if (!response.data.data.validators) throw Error("Response is empty");
-
-    let pubkeysList = response.data.data.validators;
-
-    registeredPubkeys = pubkeysList.map((item: { id: string; }) => item.id)
-  } catch (err) {
-    console.error("ERROR DURING AXIOS REQUEST", err);
-  } finally {
-    return registeredPubkeys;
-  }
-}
-
-export async function getValidatorCountPerOperator(operatorIds:number[]): Promise<{id: number, validatorCount: number}[]> {
-  
-  let validatorCountPerOperator = [];
-  try {
-    const response = await axios({
-      method: "POST",
-      url:
-        process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest",
-      headers: {
-        "content-type": "application/json",
-      },
-      data: {
-        query: `
-            query getValidatorCountPerOperator($operatorIds: [BigInt!]) {
-              operators(where: {operatorId_in: $operatorIds}) {
-                id
-                validatorCount
-              }
-            }`,
-        variables: { operatorIds: operatorIds },
-      },
-    });
-    if (response.status !== 200) throw Error("Request did not return OK");
-    if (!response.data.data.operators) throw Error("Response is empty");
-
-    validatorCountPerOperator = response.data.data.operators.map((item: { id: string; validatorCount: string; }) => {
-      return {
-        id: parseInt(item.id),
-        validatorCount: parseInt(item.validatorCount)
+  const query = `
+    query clusterSnapshot($owner: ID!, $operatorIds: [BigInt!]!) {
+      clusters(
+        where: {owner_: {id: $owner}, operatorIds: $operatorIds}
+      ) {
+        validatorCount
+        networkFeeIndex
+        index
+        active
+        balance
       }
+    }
+  `;
+  const variables = {
+    owner: owner,
+    operatorIds: operatorIDs,
+  };
+
+  try {
+    const response = await axios({
+      method: "POST",
+      url:
+        process.env.SUBGRAPH_API ||
+        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/",
+      headers: {
+        "content-type": "application/json",
+      },
+      data: {
+        query,
+        variables,
+      },
     });
 
+    if (response.status !== 200) {
+      console.error("Request did not return OK,");
+    }
+
+    if (response.data.data.clusters && response.data.data.clusters.length > 0) {
+      const cluster = response.data.data.clusters[0];
+      clusterSnapshot = {
+        validatorCount: Number(cluster.validatorCount),
+        networkFeeIndex: BigInt(cluster.networkFeeIndex),
+        index: BigInt(cluster.index),
+        active: cluster.active,
+        balance: BigInt(cluster.balance),
+      }
+    }
+
+    return clusterSnapshot;
   } catch (err) {
-    console.error("ERROR DURING AXIOS REQUEST", err);
-  } finally {
-    return validatorCountPerOperator;
+    console.error("Error getting cluster snapshot:", err);
+    return clusterSnapshot;
   }
 }
