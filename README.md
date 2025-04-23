@@ -35,8 +35,6 @@ PRIVATE_KEY=
 SSV_CONTRACT=
 # The owner address that will be used to register validators
 OWNER_ADDRESS=
-# The directory where generated keystores files should be saved to
-KEYSTORES_OUTPUT_DIRECTORY=
 # The password that should be used to encrypt generated keystores files
 KEYSTORE_PASSWORD=
 # the address of the multi-sig safe to be used for this script

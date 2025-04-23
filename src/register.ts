@@ -15,6 +15,7 @@ dotenv.config();
 export const register = new Command("register");
 
 const MAX_VALIDATORS_PER_OPERATOR = 1000;
+const KEYSTORES_OUTPUT_DIRECTORY = "./validator_keys"
 
 register
   .version("0.0.2", "-v, --vers", "output the current version")
@@ -30,8 +31,6 @@ register
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
     if (!process.env.SSV_CONTRACT) throw Error("No SSV contract address provided");
     if (!process.env.OWNER_ADDRESS) throw Error("No Owner address provided");
-    if (!process.env.KEYSTORES_OUTPUT_DIRECTORY)
-      throw Error("Keystores output directory not provided");
     if (!process.env.KEYSTORE_PASSWORD)
       throw Error("Keystore password not provided");
     
@@ -143,7 +142,7 @@ register
 
       // get the user nonce for batch 1 onwards
       if (totalKeysRegistered != 0 ) {
-        await retryWithExponentialBackoff(verifyUpdatedNonce, {sdk: SSVSDK, nonce, expectedNonce, ownerAddress: process.env.SAFE_ADDRESS}, {
+        nonce = await retryWithExponentialBackoff(verifyUpdatedNonce, {sdk, nonce, expectedNonce, ownerAddress: process.env.SAFE_ADDRESS}, {
           retries: 3,
           factor: 2,
           maxTimeout: 10000,
@@ -164,11 +163,11 @@ register
       });
       
       // write the keys to respective seed phrase file, deposit file and various keystores files
-      writeKeysToFiles(keys, keysharesPayloads, process.env.KEYSTORES_OUTPUT_DIRECTORY);
+      writeKeysToFiles(keys, keysharesPayloads, KEYSTORES_OUTPUT_DIRECTORY);
 
       // Transform keysharesPayloads into ShareObject type
       const shareObjects: ShareObject[] = keysharesPayloads.map((payload: any) => ({
-        keySharesFilePath: `${process.env.KEYSTORES_OUTPUT_DIRECTORY}/keyshares-${keys.masterSKHash}.json`,
+        keySharesFilePath: `${KEYSTORES_OUTPUT_DIRECTORY}/keyshares-${keys.masterSKHash}.json`,
         data: {
           ownerNonce: nonce,
           ownerAddress: process.env.OWNER_ADDRESS!,
@@ -213,4 +212,6 @@ register
       );
       throw Error("Nonce has not been updated since last successful transaction! Exiting")
     }
+
+    return nonce
   }
