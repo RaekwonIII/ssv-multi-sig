@@ -8,6 +8,8 @@ import SafeApiKit from "@safe-global/api-kit";
 
 import Safe from "@safe-global/protocol-kit";
 import { TransactionResponse } from "ethers";
+import * as fs from 'fs';
+import * as path from 'path';
 
 export async function getSafeProtocolKit(
   rpc_url: string,
@@ -45,6 +47,20 @@ export async function createApprovedMultiSigTx(
   )
 
   if (!isValidTx) {
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `invalid-tx-${timestamp}.log`;
+      const filepath = path.join(process.cwd(), 'logs', filename);
+      
+      if (!fs.existsSync(path.join(process.cwd(), 'logs'))) {
+        fs.mkdirSync(path.join(process.cwd(), 'logs'), { recursive: true });
+      }
+      
+      fs.writeFileSync(filepath, transaction_data);
+      console.log(`Invalid transaction data logged to: ${filepath}`);
+    } catch (error) {
+      console.error('Failed to log invalid transaction:', error);
+    }
     throw Error("Transaction is invalid");
   }
 
