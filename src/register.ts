@@ -30,10 +30,11 @@ register
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
     if (!process.env.SSV_CONTRACT) throw Error("No SSV contract address provided");
-    if (!process.env.OWNER_ADDRESS) throw Error("No Owner address provided");
+    if (!process.env.SUBGRAPH_API) throw Error("No Subgraph API endpoint provided");
+    if (!process.env.SUBGRAPH_API_KEY) throw Error("No Subgraph API Key provided");
     if (!process.env.KEYSTORE_PASSWORD)
       throw Error("Keystore password not provided");
-    
+
     console.log(`Registering keyshares to operators: ${JSON.stringify(operatorIds)}`)
 
     const private_key = process.env.PRIVATE_KEY as `0x${string}`;
@@ -44,7 +45,8 @@ register
     console.log(`Maximum number of keys per transaction: ${chunkSize}.`)
 
     // const chain = process.env.TESTNET? chains.hoodi : chains.mainnet
-    const chain = process.env.TESTNET? chains.holesky : chains.mainnet
+    const graphUrl = process.env.TESTNET ? `https://gateway.thegraph.com/api/${process.env.SUBGRAPH_API_KEY}/subgraphs/id/2fc6xRiZ2PaPYE2fBRZ1fB1SFS3PojvCXB8fFguXQZk6` : `https://gateway.thegraph.com/api/${process.env.SUBGRAPH_API_KEY}/subgraphs/id/7V45fKPugp9psQjgrGsfif98gWzCyC6ChN7CW98VyQnr`
+    const chain = process.env.TESTNET ? chains.holesky : chains.mainnet
     console.log(`Using chain with ID: ${chain.id}`)
 
     const transport = http();
@@ -64,12 +66,15 @@ register
     const sdk = new SSVSDK({
       walletClient: walletClient,
       publicClient: publicClient,
+      _: {
+        graphUrl: graphUrl
+      }
     });
 
     const safeProtocolKit = await getSafeProtocolKit(
-        process.env.RPC_ENDPOINT,
-        process.env.PRIVATE_KEY,
-        process.env.SAFE_ADDRESS,
+      process.env.RPC_ENDPOINT,
+      process.env.PRIVATE_KEY,
+      process.env.SAFE_ADDRESS,
     )
 
     console.log(`Collecting operator data...`)
@@ -122,46 +127,46 @@ register
 
     // need to initialize these
     let totalKeysRegistered = 0;
-    let nonce = Number(await sdk.api.getOwnerNonce({ owner: process.env.OWNER_ADDRESS }));
+    let nonce = Number(await sdk.api.getOwnerNonce({ owner: process.env.SAFE_ADDRESS }));
     let expectedNonce = nonce;
 
     while (totalKeysRegistered < keysCount) {
       // Calculate how many keys we can register in this batch
       const remainingKeys = keysCount - totalKeysRegistered;
       const currentChunkSize = Math.min(chunkSize, remainingKeys);
-      
+
       // generate the keys for this batch
       console.log(`Creating keystores (${currentChunkSize} keys)`)
       const keys = await createValidatorKeys({
         count: currentChunkSize,
-        withdrawal: process.env.OWNER_ADDRESS as `0x${string}`,
+        withdrawal: process.env.SAFE_ADDRESS as `0x${string}`,
         password: process.env.KEYSTORE_PASSWORD,
       });
-      
+
       console.log(`Keystores created.`)
 
       // get the user nonce for batch 1 onwards
-      if (totalKeysRegistered != 0 ) {
-        nonce = await retryWithExponentialBackoff(verifyUpdatedNonce, {sdk, nonce, expectedNonce, ownerAddress: process.env.SAFE_ADDRESS}, {
+      if (totalKeysRegistered != 0) {
+        nonce = await retryWithExponentialBackoff(verifyUpdatedNonce, { sdk, nonce, expectedNonce, ownerAddress: process.env.SAFE_ADDRESS }, {
           retries: 3,
           factor: 2,
           maxTimeout: 10000,
           maxRetryTime: 5000,
         })
       }
-      
+
       console.log("Current nonce: ", nonce);
-      
+
       // split keys into keyshares
       const keysharesPayloads = await sdk.utils.generateKeyShares({
         keystore: keys.keystores.map((keystore) => JSON.stringify(keystore)),
         keystore_password: process.env.KEYSTORE_PASSWORD,
         operator_keys: operatorsData.map((operator) => operator.publicKey),
         operator_ids: operatorsData.map((operator) => Number(operator.id)),
-        owner_address: process.env.OWNER_ADDRESS,
+        owner_address: process.env.SAFE_ADDRESS,
         nonce: nonce,
       });
-      
+
       // write the keys to respective seed phrase file, deposit file and various keystores files
       writeKeysToFiles(keys, keysharesPayloads, KEYSTORES_OUTPUT_DIRECTORY);
 
@@ -170,7 +175,7 @@ register
         keySharesFilePath: `${KEYSTORES_OUTPUT_DIRECTORY}/keyshares-${keys.masterSKHash}.json`,
         data: {
           ownerNonce: nonce,
-          ownerAddress: process.env.OWNER_ADDRESS!,
+          ownerAddress: process.env.SAFE_ADDRESS!,
           publicKey: payload.publicKey,
           operators: [{
             id: Number(operatorsData[0].id),
@@ -184,11 +189,11 @@ register
         }
       }));
 
-      let clusterSnapshot = await getClusterSnapshot(process.env.OWNER_ADDRESS, operatorIds)
+      let clusterSnapshot = await getClusterSnapshot(process.env.SAFE_ADDRESS, operatorIds)
 
       const ethersWallet = new ethers.Wallet(private_key, new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT));
-      
-      let txData = await getBulkRegistrationTxData(shareObjects, process.env.OWNER_ADDRESS, ethersWallet, clusterSnapshot)
+
+      let txData = await getBulkRegistrationTxData(shareObjects, process.env.SAFE_ADDRESS, ethersWallet, clusterSnapshot)
 
       // generate Safe TX
       const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, txData)
@@ -199,19 +204,19 @@ register
     }
   });
 
-  async function verifyUpdatedNonce(options: {sdk: SSVSDK, nonce:number, expectedNonce: number, ownerAddress: string}) {
-    var {sdk, nonce, expectedNonce, ownerAddress} = options
-    // update nonce
-    console.info(`Obtaining owner nonce`);
-    nonce = Number(await sdk.api.getOwnerNonce({ owner: ownerAddress }));
-    console.info(`Owner nonce: ${nonce}`);
-    // expected to be the same on first loop, but important on following ones
-    if (nonce !== expectedNonce) {
-      console.error(
-        "Nonce has not been updated since last successful transaction, retrying"
-      );
-      throw Error("Nonce has not been updated since last successful transaction! Exiting")
-    }
-
-    return nonce
+async function verifyUpdatedNonce(options: { sdk: SSVSDK, nonce: number, expectedNonce: number, ownerAddress: string }) {
+  var { sdk, nonce, expectedNonce, ownerAddress } = options
+  // update nonce
+  console.info(`Obtaining owner nonce`);
+  nonce = Number(await sdk.api.getOwnerNonce({ owner: ownerAddress }));
+  console.info(`Owner nonce: ${nonce}`);
+  // expected to be the same on first loop, but important on following ones
+  if (nonce !== expectedNonce) {
+    console.error(
+      "Nonce has not been updated since last successful transaction, retrying"
+    );
+    throw Error("Nonce has not been updated since last successful transaction! Exiting")
   }
+
+  return nonce
+}
