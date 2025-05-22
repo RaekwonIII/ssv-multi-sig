@@ -167,9 +167,6 @@ register
         nonce: nonce,
       });
 
-      // write the keys to respective seed phrase file, deposit file and various keystores files
-      writeKeysToFiles(keys, keysharesPayloads, KEYSTORES_OUTPUT_DIRECTORY);
-
       // Transform keysharesPayloads into ShareObject type
       const shareObjects: ShareObject[] = keysharesPayloads.map((payload: any) => ({
         keySharesFilePath: `${KEYSTORES_OUTPUT_DIRECTORY}/keyshares-${keys.masterSKHash}.json`,
@@ -198,6 +195,10 @@ register
       // generate Safe TX
       const multiSigTransaction = await createApprovedMultiSigTx(safeProtocolKit, txData)
       await checkAndExecuteSignatures(safeProtocolKit, multiSigTransaction);
+
+      // only write to file if the tx has succeeded, to avoid confusion in case of failed tx
+      // write the keys to respective seed phrase file, deposit file and various keystores files
+      writeKeysToFiles(keys, keysharesPayloads, KEYSTORES_OUTPUT_DIRECTORY);
 
       totalKeysRegistered += currentChunkSize;
       expectedNonce = nonce + currentChunkSize;
