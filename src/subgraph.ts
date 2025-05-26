@@ -44,9 +44,10 @@ export async function getClusterSnapshot(
       method: "POST",
       url:
         process.env.SUBGRAPH_API ||
-        "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/",
+        "https://gateway.thegraph.com/api/subgraphs/id/2fc6xRiZ2PaPYE2fBRZ1fB1SFS3PojvCXB8fFguXQZk6",
       headers: {
         "content-type": "application/json",
+        "Authorization": `Bearer ${process.env.SUBGRAPH_API_KEY}`
       },
       data: {
         query,

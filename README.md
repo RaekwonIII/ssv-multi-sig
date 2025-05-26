@@ -33,16 +33,16 @@ RPC_ENDPOINT=
 PRIVATE_KEY=
 # The address of the SSVNetwork smart contract
 SSV_CONTRACT=
-# The owner address that will be used to register validators
-OWNER_ADDRESS=
 # The password that should be used to encrypt generated keystores files
 KEYSTORE_PASSWORD=
-# the address of the multi-sig safe to be used for this script
+# the address of the multi-sig safe to be used for this script. This will effectively be the validator owner on SSV network
 SAFE_ADDRESS=
 # URL of the safe transaction service. Can be left empty to use default (mainnet)
 TX_SERVICE= # e.g. https://safe-transaction-mainnet.safe.global/ or https://transaction-holesky.holesky-safe.protofire.io/
 # URL of the subgraph API which is chain dependent 
-SUBGRAPH_API= # e.g. https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest/
+SUBGRAPH_API= # e.g. https://gateway.thegraph.com/api/subgraphs/id/7V45fKPugp9psQjgrGsfif98gWzCyC6ChN7CW98VyQnr for SSV Network mainnet
+# The API key to be used for requests to the subgraph endpoint
+SUBGRAPH_API_KEY= # generate your API key **for free** here: https://thegraph.com/studio/apikeys/
 ```
 
 ## 4. Create and register validators
