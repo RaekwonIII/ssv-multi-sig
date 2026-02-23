@@ -4,24 +4,10 @@ import { ValidatorKeys } from "./generate";
 import { ethers } from "ethers";
 import SSVContract from "../abi/SSVNetwork.json";
 
-export type ShareObject = {
-  keySharesFilePath: string;
-  data: {
-    ownerNonce: number;
-    ownerAddress: string;
-    publicKey: string;
-    operators: [
-      {
-        id: number;
-        operatorKey: string;
-      }
-    ];
-  };
-  payload: {
-    publicKey: string;
-    operatorIds: number[];
-    sharesData: string;
-  };
+export type KeysharesPayload = {
+  publicKey: string;
+  operatorIds: number[];
+  sharesData: string;
 };
 
 export function retryWithExponentialBackoff<T>(
@@ -108,8 +94,8 @@ export function writeKeysToFiles(
 }
 
 export async function getBulkRegistrationTxData(
-  sharesDataObjectArray: ShareObject[],
-  ownerAddress: string,
+  keysharesPayload: KeysharesPayload[],
+  operatorIds: number[],
   signer: ethers.Wallet,
   clusterSnapshot: {
     validatorCount: number;
@@ -125,16 +111,15 @@ export async function getBulkRegistrationTxData(
     signer
   );
 
-  let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.publicKey;
+  let pubkeys = keysharesPayload.map((keyshareObj) => {
+    return keyshareObj.publicKey;
   });
 
-  let sharesData = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.sharesData;
+  let sharesData = keysharesPayload.map((keyshareObj) => {
+    return keyshareObj.sharesData;
   });
 
-  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
-  let amount = ethers.parseEther("10");
+  let amount = ethers.parseEther("0.1");
 
   console.log(`Current validator count: ${clusterSnapshot.validatorCount}`);
 
