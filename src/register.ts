@@ -81,7 +81,7 @@ register
     const graphUrl = process.env.TESTNET
       ? `https://gateway.thegraph.com/api/${process.env.SUBGRAPH_API_KEY}/subgraphs/id/2fc6xRiZ2PaPYE2fBRZ1fB1SFS3PojvCXB8fFguXQZk6`
       : `https://gateway.thegraph.com/api/${process.env.SUBGRAPH_API_KEY}/subgraphs/id/7V45fKPugp9psQjgrGsfif98gWzCyC6ChN7CW98VyQnr`;
-    const chain = process.env.TESTNET ? chains.holesky : chains.mainnet;
+    const chain = process.env.TESTNET ? chains.hoodi : chains.mainnet;
     console.log(`Using chain with ID: ${chain.id}`);
 
     const transport = http();
@@ -101,9 +101,12 @@ register
     const sdk = new SSVSDK({
       walletClient: walletClient,
       publicClient: publicClient,
-      _: {
-        graphUrl: graphUrl,
-      },
+      extendedConfig: {
+        subgraph: {
+          endpoint: graphUrl,
+        },
+        
+      }
     });
 
     const safeProtocolKit = await getSafeProtocolKit(
@@ -269,6 +272,9 @@ register
       }
       totalKeysRegistered += currentChunkSize;
       expectedNonce = nonce + currentChunkSize;
+      console.log(
+        `Successfully registered ${totalKeysRegistered} keys so far. Last registered pubkey is ${keysharesPayloads[keysharesPayloads.length - 1].publicKey}. Moving on to the next batch...`,
+      );
     }
   });
 
