@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Command } from "commander";
 import { SSVSDK, chains } from "@ssv-labs/ssv-sdk";
+import { createClusterId } from '@ssv-labs/ssv-sdk/utils'
 import { createPublicClient, createWalletClient, http, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createValidatorKeys, ValidatorKeys } from "./generate.js";
@@ -24,7 +25,7 @@ dotenv.config();
 
 export const register = new Command("register");
 
-const MAX_VALIDATORS_PER_OPERATOR = 1000;
+const MAX_VALIDATORS_PER_OPERATOR = 3000;
 const KEYSTORES_OUTPUT_DIRECTORY = "./validator_keys";
 
 register
@@ -77,10 +78,6 @@ register
     const chunkSize = parseInt(process.env.CHUNK_SIZE || "40");
     console.log(`Maximum number of keys per transaction: ${chunkSize}.`);
 
-    // const chain = process.env.TESTNET? chains.hoodi : chains.mainnet
-    const graphUrl = process.env.TESTNET
-      ? `https://gateway.thegraph.com/api/${process.env.SUBGRAPH_API_KEY}/subgraphs/id/2fc6xRiZ2PaPYE2fBRZ1fB1SFS3PojvCXB8fFguXQZk6`
-      : `https://gateway.thegraph.com/api/${process.env.SUBGRAPH_API_KEY}/subgraphs/id/7V45fKPugp9psQjgrGsfif98gWzCyC6ChN7CW98VyQnr`;
     const chain = process.env.TESTNET ? chains.hoodi : chains.mainnet;
     console.log(`Using chain with ID: ${chain.id}`);
 
@@ -103,7 +100,8 @@ register
       publicClient: publicClient,
       extendedConfig: {
         subgraph: {
-          endpoint: graphUrl,
+          endpoint: process.env.SUBGRAPH_API,
+          apiKey: process.env.SUBGRAPH_API_KEY,
         },
         
       }
@@ -237,10 +235,13 @@ register
         nonce: nonce,
       });
 
-      let clusterSnapshot = await getClusterSnapshot(
-        process.env.SAFE_ADDRESS,
-        operatorIds,
-      );
+      let clusterSnapshot = await sdk.api.getClusterSnapshot({
+        id: createClusterId(process.env.SAFE_ADDRESS, operatorsData.map((operator) => Number(operator.id)))
+      })
+
+      if (!clusterSnapshot) {
+        throw new Error("Failed to retrieve cluster snapshot");
+      }
 
       const ethersWallet = new ethers.Wallet(
         private_key,

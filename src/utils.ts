@@ -97,13 +97,13 @@ export async function getBulkRegistrationTxData(
   keysharesPayload: KeysharesPayload[],
   operatorIds: number[],
   signer: ethers.Wallet,
-  clusterSnapshot: {
-    validatorCount: number;
-    networkFeeIndex: bigint;
-    index: bigint;
+  clusterSnapshot:  {
     active: boolean;
-    balance: bigint;
-  }
+    validatorCount: string;
+    balance: string;
+    index: string;
+    networkFeeIndex: string;
+}
 ): Promise<string> {
   let contract = new ethers.Contract(
     process.env.SSV_CONTRACT || "",
