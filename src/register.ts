@@ -10,7 +10,6 @@ import {
   createApprovedMultiSigTx,
   getSafeProtocolKit,
 } from "./transaction.js";
-import { ClusterSnapshot, getClusterSnapshot } from "./subgraph.js";
 import {
   commaSeparatedList,
   getBulkRegistrationTxData,
@@ -226,7 +225,7 @@ register
       console.log("Current nonce: ", nonce);
 
       // split keys into keyshares
-      const keysharesPayloads = await sdk.utils.generateKeyShares({
+      const keyshares = await sdk.utils.generateKeyShares({
         keystore: keysToRegister.map((keystore) => JSON.stringify(keystore)),
         keystore_password: process.env.KEYSTORE_PASSWORD,
         operator_keys: operatorsData.map((operator) => operator.publicKey),
@@ -234,26 +233,8 @@ register
         owner_address: process.env.SAFE_ADDRESS,
         nonce: nonce,
       });
-
-      let clusterSnapshot = await sdk.api.getClusterSnapshot({
-        id: createClusterId(process.env.SAFE_ADDRESS, operatorsData.map((operator) => Number(operator.id)))
-      })
-
-      if (!clusterSnapshot) {
-        throw new Error("Failed to retrieve cluster snapshot");
-      }
-
-      const ethersWallet = new ethers.Wallet(
-        private_key,
-        new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT),
-      );
-
-      let txData = await getBulkRegistrationTxData(
-        keysharesPayloads,
-        operatorIds,
-        ethersWallet,
-        clusterSnapshot,
-      );
+        
+      let txData = await sdk.clusters.registerValidatorsRawData({args: {keyshares, depositAmount: parseEther("0.1")}})
 
       // generate Safe TX
       const multiSigTransaction = await createApprovedMultiSigTx(
@@ -267,14 +248,14 @@ register
         // write the keys to respective seed phrase file, deposit file and various keystores files
         writeKeysToFiles(
           generatedKeystores,
-          keysharesPayloads,
+          keyshares,
           KEYSTORES_OUTPUT_DIRECTORY,
         );
       }
       totalKeysRegistered += currentChunkSize;
       expectedNonce = nonce + currentChunkSize;
       console.log(
-        `Successfully registered ${totalKeysRegistered} keys so far. Last registered pubkey is ${keysharesPayloads[keysharesPayloads.length - 1].publicKey}. Moving on to the next batch...`,
+        `Successfully registered ${totalKeysRegistered} keys so far. Last registered pubkey is ${keyshares[keyshares.length - 1].publicKey}. Moving on to the next batch...`,
       );
     }
   });
