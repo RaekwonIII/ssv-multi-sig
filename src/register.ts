@@ -19,13 +19,46 @@ import {
 import { ethers } from "ethers";
 
 import * as dotenv from "dotenv";
-import { readdir, readFile } from "fs/promises";
+import { readdir, readFile, writeFile, rename, access } from "fs/promises";
+import { createHash } from "crypto";
 dotenv.config();
 
 export const register = new Command("register");
 
 const MAX_VALIDATORS_PER_OPERATOR = 3000;
 const KEYSTORES_OUTPUT_DIRECTORY = "./validator_keys";
+const PROGRESS_FILENAME = ".ssv-register-progress.json";
+
+type BatchStatus = "prepared" | "approved" | "executed";
+
+type ProgressBatch = {
+  startIndex: number;
+  count: number;
+  nonce: number;
+  status: BatchStatus;
+  safeTxHash?: string;
+  executeTxHash?: string;
+  receiptBlock?: number;
+  updatedAt: string;
+};
+
+type ProgressState = {
+  version: 1;
+  runId: string;
+  chainId: number;
+  safeAddress: string;
+  ssvContract: string;
+  operatorIds: number[];
+  chunkSize: number;
+  keystoreDir: string;
+  keystoreFilesHash: string;
+  totalKeys: number;
+  initialOwnerNonce: number;
+  nextIndex: number;
+  lastKnownOwnerNonce: number;
+  batches: ProgressBatch[];
+  updatedAt: string;
+};
 
 register
   .version("0.0.2", "-v, --vers", "output the current version")
@@ -35,11 +68,19 @@ register
     commaSeparatedList,
   )
   .option("-n, --num-keys <num-keys>", "number of keys to generate")
-  .option("-k, --keystoresDir <keystores-dir>", "keystores output directory")
+  .option(
+    "-k, --keystoresDir <keystores-dir>",
+    "directory to load existing keystores from",
+  )
   .action(async (operatorIds, _options) => {
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
+    try {
+      new URL(process.env.RPC_ENDPOINT);
+    } catch {
+      throw Error("RPC endpoint must be a valid URL");
+    }
     if (!process.env.SSV_CONTRACT)
       throw Error("No SSV contract address provided");
     if (!process.env.SUBGRAPH_API)
@@ -57,6 +98,7 @@ register
     let generateKeystores = false;
     let keystoresDir = _options.keystoresDir;
     let loadedKeystores = [];
+    let loadedKeystoreFiles: string[] = [];
     let keysCount;
     if (!keystoresDir) {
       keystoresDir = KEYSTORES_OUTPUT_DIRECTORY;
@@ -69,7 +111,9 @@ register
       console.log(`Requested creation of ${keysCount} keys.`);
     } else {
       console.log(`Loading keystores from directory: ${keystoresDir}`);
-      loadedKeystores = await loadKeystores(keystoresDir);
+      const loaded = await loadKeystores(keystoresDir);
+      loadedKeystores = loaded.keystores;
+      loadedKeystoreFiles = loaded.files;
       keysCount = loadedKeystores.length;
       console.log(`Loaded ${keysCount} keystore files.`);
     }
@@ -80,7 +124,7 @@ register
     const chain = process.env.TESTNET ? chains.hoodi : chains.mainnet;
     console.log(`Using chain with ID: ${chain.id}`);
 
-    const transport = http();
+    const transport = http(process.env.RPC_ENDPOINT);
     const publicClient = createPublicClient({
       chain,
       transport,
@@ -153,11 +197,11 @@ register
     if (
       parseInt(maxVcountOperator.validatorCount) >= MAX_VALIDATORS_PER_OPERATOR
     ) {
-      console.log(
-        "Maximum validator limit (1000) has been reached for at least one operator. Exiting...",
-      );
-      process.exit(0);
-    }
+        console.log(
+          `Maximum validator limit (${MAX_VALIDATORS_PER_OPERATOR}) has been reached for at least one operator. Exiting...`,
+        );
+        process.exit(0);
+      }
 
     if (
       parseInt(maxVcountOperator.validatorCount) + keysCount >
@@ -178,6 +222,45 @@ register
     let nonce = Number(
       await sdk.api.getOwnerNonce({ owner: process.env.SAFE_ADDRESS }),
     );
+
+    let progress: ProgressState | null = null;
+    let progressPath: string | null = null;
+    if (!generateKeystores) {
+      progressPath = `${keystoresDir}/${PROGRESS_FILENAME}`;
+      const runId = createRunId({
+        chainId: chain.id,
+        safeAddress: process.env.SAFE_ADDRESS,
+        ssvContract: process.env.SSV_CONTRACT,
+        operatorIds,
+        chunkSize,
+        keystoreDir: keystoresDir,
+        keystoreFilesHash: hashKeystoreFileList(loadedKeystoreFiles),
+        totalKeys: keysCount,
+      });
+
+      progress = await loadOrCreateProgress({
+        runId,
+        progressPath,
+        chainId: chain.id,
+        safeAddress: process.env.SAFE_ADDRESS,
+        ssvContract: process.env.SSV_CONTRACT,
+        operatorIds,
+        chunkSize,
+        keystoreDir: keystoresDir,
+        keystoreFilesHash: hashKeystoreFileList(loadedKeystoreFiles),
+        totalKeys: keysCount,
+        ownerNonce: nonce,
+      });
+
+      progress = reconcileProgressStrict(progress, nonce);
+      await saveProgress(progressPath, progress);
+      totalKeysRegistered = progress.nextIndex;
+      nonce = progress.lastKnownOwnerNonce;
+      console.log(
+        `Resume state: next key index ${totalKeysRegistered}, owner nonce ${nonce}.`,
+      );
+    }
+
     let expectedNonce = nonce;
     while (totalKeysRegistered < keysCount) {
       // Calculate how many keys we can register in this batch
@@ -208,6 +291,20 @@ register
           totalKeysRegistered + currentChunkSize,
         );
       }
+
+      let activeBatch: ProgressBatch | null = null;
+      if (progress && progressPath) {
+        activeBatch = {
+          startIndex: totalKeysRegistered,
+          count: currentChunkSize,
+          nonce,
+          status: "prepared",
+          updatedAt: new Date().toISOString(),
+        };
+        progress = upsertProgressBatch(progress, activeBatch);
+        await saveProgress(progressPath, progress);
+      }
+
       // get the user nonce for batch 1 onwards
       if (totalKeysRegistered != 0) {
         nonce = await retryWithExponentialBackoff(
@@ -224,6 +321,12 @@ register
 
       console.log("Current nonce: ", nonce);
 
+      if (progress && progressPath && activeBatch && activeBatch.nonce !== nonce) {
+        activeBatch.nonce = nonce;
+        progress = upsertProgressBatch(progress, activeBatch);
+        await saveProgress(progressPath, progress);
+      }
+
       // split keys into keyshares
       const keyshares = await sdk.utils.generateKeyShares({
         keystore: keysToRegister.map((keystore) => JSON.stringify(keystore)),
@@ -237,11 +340,24 @@ register
       let txData = await sdk.clusters.registerValidatorsRawData({args: {keyshares, depositAmount: parseEther("0.1")}})
 
       // generate Safe TX
-      const multiSigTransaction = await createApprovedMultiSigTx(
+      const { safeTransaction: multiSigTransaction, safeTxHash } =
+        await createApprovedMultiSigTx(
         safeProtocolKit,
         txData,
       );
-      await checkAndExecuteSignatures(safeProtocolKit, multiSigTransaction);
+
+      if (progress && progressPath && activeBatch) {
+        activeBatch.status = "approved";
+        activeBatch.safeTxHash = safeTxHash;
+        activeBatch.updatedAt = new Date().toISOString();
+        progress = upsertProgressBatch(progress, activeBatch);
+        await saveProgress(progressPath, progress);
+      }
+
+      const executeTxHash = await checkAndExecuteSignatures(
+        safeProtocolKit,
+        multiSigTransaction,
+      );
 
       if (generateKeystores) {
         // only write to file if the tx has succeeded, to avoid confusion in case of failed tx
@@ -252,6 +368,18 @@ register
           KEYSTORES_OUTPUT_DIRECTORY,
         );
       }
+
+      if (progress && progressPath && activeBatch) {
+        activeBatch.status = "executed";
+        activeBatch.executeTxHash = executeTxHash;
+        activeBatch.updatedAt = new Date().toISOString();
+        progress = upsertProgressBatch(progress, activeBatch);
+        progress.nextIndex = totalKeysRegistered + currentChunkSize;
+        progress.lastKnownOwnerNonce = nonce + currentChunkSize;
+        progress.updatedAt = new Date().toISOString();
+        await saveProgress(progressPath, progress);
+      }
+
       totalKeysRegistered += currentChunkSize;
       expectedNonce = nonce + currentChunkSize;
       console.log(
@@ -260,24 +388,195 @@ register
     }
   });
 
-async function loadKeystores(keystoreDir: string): Promise<any[]> {
+async function loadKeystores(
+  keystoreDir: string,
+): Promise<{ keystores: any[]; files: string[] }> {
   try {
     const files = await readdir(keystoreDir);
+    const sortedKeystoreFiles = files
+      .filter((file) => file.startsWith("keystore"))
+      .sort((a, b) => {
+        const indexRegex = /keystore-m_12381_3600_(\d+)_0_0-/;
+        const aMatch = a.match(indexRegex);
+        const bMatch = b.match(indexRegex);
+
+        if (aMatch && bMatch) {
+          return Number(aMatch[1]) - Number(bMatch[1]);
+        }
+
+        return a.localeCompare(b);
+      });
+
     const keys = [];
-    for (const file of files) {
-      if (file.startsWith("keystore")) {
-        const content = await readFile(`${keystoreDir}/${file}`, {
-          encoding: "utf8",
-        });
-        keys.push(JSON.parse(content));
-      }
+    for (const file of sortedKeystoreFiles) {
+      const content = await readFile(`${keystoreDir}/${file}`, {
+        encoding: "utf8",
+      });
+      keys.push(JSON.parse(content));
     }
-    return keys;
+    return { keystores: keys, files: sortedKeystoreFiles };
   } catch (error) {
     console.error("Failed to read keystore JSON file:", error);
     throw new Error(
       "Failed to load keystore. Please check keystore JSON file exists and is valid.",
     );
+  }
+}
+
+function hashKeystoreFileList(files: string[]): string {
+  return createHash("sha256").update(JSON.stringify(files)).digest("hex");
+}
+
+function createRunId(options: {
+  chainId: number;
+  safeAddress: string;
+  ssvContract: string;
+  operatorIds: number[];
+  chunkSize: number;
+  keystoreDir: string;
+  keystoreFilesHash: string;
+  totalKeys: number;
+}): string {
+  const payload = {
+    chainId: options.chainId,
+    safeAddress: options.safeAddress.toLowerCase(),
+    ssvContract: options.ssvContract.toLowerCase(),
+    operatorIds: [...options.operatorIds].sort((a, b) => a - b),
+    chunkSize: options.chunkSize,
+    keystoreDir: options.keystoreDir,
+    keystoreFilesHash: options.keystoreFilesHash,
+    totalKeys: options.totalKeys,
+  };
+
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+async function loadOrCreateProgress(options: {
+  runId: string;
+  progressPath: string;
+  chainId: number;
+  safeAddress: string;
+  ssvContract: string;
+  operatorIds: number[];
+  chunkSize: number;
+  keystoreDir: string;
+  keystoreFilesHash: string;
+  totalKeys: number;
+  ownerNonce: number;
+}): Promise<ProgressState> {
+  const exists = await fileExists(options.progressPath);
+  if (!exists) {
+    const freshProgress: ProgressState = {
+      version: 1,
+      runId: options.runId,
+      chainId: options.chainId,
+      safeAddress: options.safeAddress,
+      ssvContract: options.ssvContract,
+      operatorIds: [...options.operatorIds].sort((a, b) => a - b),
+      chunkSize: options.chunkSize,
+      keystoreDir: options.keystoreDir,
+      keystoreFilesHash: options.keystoreFilesHash,
+      totalKeys: options.totalKeys,
+      initialOwnerNonce: options.ownerNonce,
+      nextIndex: 0,
+      lastKnownOwnerNonce: options.ownerNonce,
+      batches: [],
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveProgress(options.progressPath, freshProgress);
+    return freshProgress;
+  }
+
+  const raw = await readFile(options.progressPath, { encoding: "utf8" });
+  const existing = JSON.parse(raw) as ProgressState;
+
+  if (existing.runId !== options.runId) {
+    throw new Error(
+      `Progress file runId mismatch. Provided parameters do not match existing progress at ${options.progressPath}.`,
+    );
+  }
+
+  return existing;
+}
+
+function reconcileProgressStrict(
+  progress: ProgressState,
+  currentOwnerNonce: number,
+): ProgressState {
+  if (currentOwnerNonce < progress.lastKnownOwnerNonce) {
+    throw new Error(
+      `Current owner nonce (${currentOwnerNonce}) is lower than checkpoint nonce (${progress.lastKnownOwnerNonce}). Aborting in strict resume mode.`,
+    );
+  }
+
+  const totalDelta = currentOwnerNonce - progress.lastKnownOwnerNonce;
+  let nonceDelta = totalDelta;
+  if (nonceDelta === 0) return progress;
+
+  const pendingBatches = progress.batches
+    .filter((batch) => batch.status !== "executed")
+    .sort((a, b) => a.startIndex - b.startIndex);
+
+  for (const batch of pendingBatches) {
+    if (nonceDelta < batch.count) break;
+
+    batch.status = "executed";
+    batch.updatedAt = new Date().toISOString();
+    progress.nextIndex = Math.max(progress.nextIndex, batch.startIndex + batch.count);
+    progress.lastKnownOwnerNonce += batch.count;
+    nonceDelta -= batch.count;
+  }
+
+  if (nonceDelta !== 0) {
+    throw new Error(
+      `Owner nonce advanced by ${totalDelta} keys outside tracked batches. Aborting in strict resume mode.`,
+    );
+  }
+
+  progress.updatedAt = new Date().toISOString();
+  return progress;
+}
+
+function upsertProgressBatch(
+  progress: ProgressState,
+  batch: ProgressBatch,
+): ProgressState {
+  const idx = progress.batches.findIndex(
+    (item) =>
+      item.startIndex === batch.startIndex &&
+      item.count === batch.count &&
+      item.nonce === batch.nonce,
+  );
+
+  if (idx === -1) {
+    progress.batches.push(batch);
+  } else {
+    progress.batches[idx] = {
+      ...progress.batches[idx],
+      ...batch,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  progress.updatedAt = new Date().toISOString();
+  return progress;
+}
+
+async function saveProgress(progressPath: string, progress: ProgressState) {
+  const tmpPath = `${progressPath}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(progress, null, 2), {
+    encoding: "utf8",
+  });
+  await rename(tmpPath, progressPath);
+}
+
+async function fileExists(path: string) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

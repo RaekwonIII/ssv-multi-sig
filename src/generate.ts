@@ -91,7 +91,7 @@ export async function createValidatorKeys({
   const deposit_data = []
   const masterSKHash = sha256(masterSK)
 
-  for (let i = index; i < count; i++) {
+  for (let i = index; i < index + count; i++) {
 
     const sk = SecretKey.fromBytes(deriveEth2ValidatorKeys(masterSK, i).signing)
     const pubkey = sk.toPublicKey()

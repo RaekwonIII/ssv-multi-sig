@@ -81,7 +81,7 @@ export async function createApprovedMultiSigTx(
   const ownersWhoApproved = await protocolKit.getOwnersWhoApprovedTx(safeTxHash);
   console.log(`Owners who approved: ${ownersWhoApproved.join(', ')}`);
   
-  return safeTransaction;
+  return { safeTransaction, safeTxHash };
 }
 
 export async function checkAndExecuteSignatures(
