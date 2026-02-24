@@ -73,6 +73,16 @@ register
     "directory to load existing keystores from",
   )
   .action(async (operatorIds, _options) => {
+    if (!Array.isArray(operatorIds) || operatorIds.length === 0) {
+      throw Error("At least one operator ID must be provided");
+    }
+    if (operatorIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+      throw Error("Operator IDs must be positive integers");
+    }
+    if (new Set(operatorIds).size !== operatorIds.length) {
+      throw Error("Operator IDs must not contain duplicates");
+    }
+
     if (!process.env.PRIVATE_KEY) throw Error("No Private Key provided");
     if (!process.env.SAFE_ADDRESS) throw Error("No SAFE address provided");
     if (!process.env.RPC_ENDPOINT) throw Error("No RPC endpoint provided");
@@ -118,7 +128,10 @@ register
       console.log(`Loaded ${keysCount} keystore files.`);
     }
 
-    const chunkSize = parseInt(process.env.CHUNK_SIZE || "40");
+    const chunkSize = parseInt(process.env.CHUNK_SIZE || "40", 10);
+    if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+      throw Error("CHUNK_SIZE must be a positive integer");
+    }
     console.log(`Maximum number of keys per transaction: ${chunkSize}.`);
 
     const chain = process.env.TESTNET ? chains.hoodi : chains.mainnet;
@@ -186,7 +199,7 @@ register
 
     // find the operator with the maximum number of validators, and the value itself
     const maxVcountOperator = operatorsData.reduce(function (prev, current) {
-      return prev && prev.validatorCount > current.validatorCount
+      return prev && Number(prev.validatorCount) > Number(current.validatorCount)
         ? prev
         : current;
     });
