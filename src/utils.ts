@@ -168,14 +168,6 @@ export function getRegistrationTxDataV2(
   const isTestnet = Boolean(process.env.TESTNET);
   const iface = new Interface(isTestnet ? SSVContractHoodi : SSVContract);
   const operatorIds = keysharesPayload[0].operatorIds;
-  // Normalize snapshot values into Solidity-friendly numeric types.
-  // const normalizedCluster = {
-  //   validatorCount: Number(clusterSnapshot.validatorCount),
-  //   networkFeeIndex: BigInt(clusterSnapshot.networkFeeIndex),
-  //   index: BigInt(clusterSnapshot.index),
-  //   active: clusterSnapshot.active,
-  //   balance: BigInt(clusterSnapshot.balance),
-  // };
 
   // Route to the single-validator function when batch size is 1.
   if (keysharesPayload.length === 1) {
