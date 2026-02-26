@@ -15,6 +15,7 @@ import {
   retryWithExponentialBackoff,
   writeKeysToFiles,
 } from "./utils.js";
+import { getClusterSnapshot } from "./subgraph.js";
 
 import * as dotenv from "dotenv";
 import { readdir, readFile, writeFile, rename, access } from "fs/promises";
@@ -363,20 +364,11 @@ register
         nonce: nonce,
       });
 
-      
-        const clusterId = createClusterId(
+        const snapshot = await getClusterSnapshot(
           ownerAddress,
           operatorsData.map((operator) => Number(operator.id)),
         );
-        const clusterSnapshot = await sdk.api.toSolidityCluster({ id: clusterId });
-        const snapshot = clusterSnapshot ? clusterSnapshot : {
-          validatorCount: 0,
-          networkFeeIndex: 0n,
-          index: 0n,
-          balance: 0n,
-          active: true,
-        };
-        
+
         const txData = getRegistrationTxDataV2(keyshares, snapshot, depositAmount);
 
       // generate Safe TX
@@ -647,8 +639,4 @@ async function verifyUpdatedNonce(options: {
   }
 
   return nonce;
-}
-
-function createClusterId(ownerAddress: string, operatorIds: number[]) {
-  return `${ownerAddress.toLowerCase()}-${operatorIds.join("-")}`;
 }

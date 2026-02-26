@@ -126,7 +126,7 @@ export async function checkAndExecuteSignatures(
       );
     else
       console.log(
-        "Transaction executed: https://holesky.etherscan.io/tx/" +
+        "Transaction executed: https://hoodi.etherscan.io/tx/" +
           executeTxResponse?.hash
       );
     return executeTxResponse?.hash;
