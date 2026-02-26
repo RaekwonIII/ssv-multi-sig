@@ -58,11 +58,6 @@ type ProgressState = {
   updatedAt: string;
 };
 
-function isTruthyEnv(value: string | undefined) {
-  if (!value) return false;
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
-}
-
 register
   .version("0.0.2", "-v, --vers", "output the current version")
   .argument(
@@ -102,7 +97,6 @@ register
       throw Error("No Subgraph API Key provided");
     if (!process.env.KEYSTORE_PASSWORD)
       throw Error("Keystore password not provided");
-    const directRegisterEnabled = isTruthyEnv(process.env.DIRECT_REGISTER);
     const depositAmountEth = process.env.DEPOSIT_AMOUNT_ETH || "0.1";
     let depositAmount: bigint;
     try {
@@ -114,7 +108,6 @@ register
     console.log(
       `Registering keyshares to operators: ${JSON.stringify(operatorIds)}`,
     );
-    console.log(`Direct register mode: ${directRegisterEnabled}`);
     console.log(`Deposit amount: ${depositAmountEth} ETH (${depositAmount.toString()} wei)`);
 
     const private_key = process.env.PRIVATE_KEY as `0x${string}`;
@@ -163,9 +156,7 @@ register
       chain,
       transport,
     });
-    // const ownerAddress = directRegisterEnabled
-    //   ? account.address
-    //   : (process.env.SAFE_ADDRESS as `0x${string}`);
+
     const ownerAddress = process.env.SAFE_ADDRESS as `0x${string}`;
 
     // Initialize SDK with viem clients
@@ -181,9 +172,7 @@ register
       }
     });
 
-    const safeProtocolKit = directRegisterEnabled
-      ? null
-      : await getSafeProtocolKit(
+    const safeProtocolKit = await getSafeProtocolKit(
           process.env.RPC_ENDPOINT,
           process.env.PRIVATE_KEY,
           process.env.SAFE_ADDRESS,
@@ -258,7 +247,7 @@ register
 
     let progress: ProgressState | null = null;
     let progressPath: string | null = null;
-    if (!generateKeystores && !directRegisterEnabled) {
+    if (!generateKeystores) {
       progressPath = `${keystoresDir}/${PROGRESS_FILENAME}`;
       const runId = createRunId({
         chainId: chain.id,
@@ -385,8 +374,6 @@ register
         };
         
         const txData = getRegistrationTxDataV2(keyshares, snapshot);
-
-        console.log("Submitting direct register transaction (Safe bypass + manual calldata)...");
 
       // generate Safe TX
       if (!safeProtocolKit) {
