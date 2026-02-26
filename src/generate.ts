@@ -2,14 +2,14 @@ import { deriveEth2ValidatorKeys, generateRandomSecretKey } from '@chainsafe/bls
 import { create, IKeystore } from '@chainsafe/bls-keystore'
 import { fromHexString, toHexString } from '@chainsafe/ssz'
 import { SecretKey } from '@chainsafe/blst'
-// import { holeskyChainConfig } from '@lodestar/config/networks'
+// import { hoodiChainConfig } from '@lodestar/config/networks'
 // import { DOMAIN_DEPOSIT } from '@lodestar/params'
 // import { ZERO_HASH, computeDomain, computeSigningRoot } from '@lodestar/state-transition'
 // import { ssz } from '@lodestar/types/phase0'
 import type { Address } from 'abitype'
 import type { ByteArray, Hex } from 'viem'
 import { sha256, toBytes, toHex } from 'viem'
-import { holeskyChainConfig } from '../node_modules/@lodestar/config/lib/networks.js'
+import { hoodiChainConfig } from '../node_modules/@lodestar/config/lib/networks.js'
 import { DOMAIN_DEPOSIT } from '../node_modules/@lodestar/params/lib/index.js'
 import { ZERO_HASH, computeDomain, computeSigningRoot } from '../node_modules/@lodestar/state-transition/lib/index.js'
 import { ssz } from '../node_modules/@lodestar/types/lib/phase0/index.js'
@@ -110,7 +110,7 @@ export async function createValidatorKeys({
       amount: 32e9,
     }
 
-    const domain = computeDomain(DOMAIN_DEPOSIT, holeskyChainConfig.GENESIS_FORK_VERSION, ZERO_HASH)
+    const domain = computeDomain(DOMAIN_DEPOSIT, hoodiChainConfig.GENESIS_FORK_VERSION, ZERO_HASH)
 
     const signingRoot = computeSigningRoot(ssz.DepositMessage, depositMessage, domain)
 
@@ -128,7 +128,7 @@ export async function createValidatorKeys({
       signature: toHexString(depositData.signature).replace('0x', ''),
       deposit_message_root: toHexString(signingRoot).replace('0x', ''),
       deposit_data_root: toHexString(depositDataRoot).replace('0x', ''),
-      fork_version: toHexString(holeskyChainConfig.GENESIS_FORK_VERSION).replace('0x', ''),
+      fork_version: toHexString(hoodiChainConfig.GENESIS_FORK_VERSION).replace('0x', ''),
       network_name: "holesky",
     }
 

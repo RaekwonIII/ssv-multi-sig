@@ -5,6 +5,7 @@ import {
 } from "@safe-global/safe-core-sdk-types";
 
 import SafeApiKit from "@safe-global/api-kit";
+import { SafeTransactionOptionalProps } from '@safe-global/protocol-kit'
 
 import Safe from "@safe-global/protocol-kit";
 import { TransactionResponse } from "ethers";
@@ -33,13 +34,18 @@ export async function createApprovedMultiSigTx(
   const transactions: MetaTransactionData[] = [{
     // @ts-ignore
     to: process.env.SSV_CONTRACT, // SSV contract address
-    value: '0',
+    value: '100000000000000000',
     data: transaction_data,
     operation: OperationType.Call
   }];
 
+  const options: SafeTransactionOptionalProps = {
+    baseGas: '100000000000000000', // Optional
+  }
+
   let safeTransaction = await protocolKit.createTransaction({
     transactions: transactions,
+    options
   });
 
   const isValidTx = await protocolKit.isValidTransaction(

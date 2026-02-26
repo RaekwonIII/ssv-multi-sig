@@ -1,13 +1,22 @@
 import retry from "retry";
 import * as fs from "fs";
 import { ValidatorKeys } from "./generate";
-import { ethers } from "ethers";
+import { ethers, Interface } from "ethers";
 import SSVContract from "../abi/SSVNetwork.json";
+import SSVContractV2 from "../abi/SSVNetworkV2.json";
 
 export type KeysharesPayload = {
   publicKey: string;
   operatorIds: number[];
   sharesData: string;
+};
+
+type ClusterSnapshotLike = {
+  active: boolean;
+  validatorCount: string | number | bigint;
+  balance: string | number | bigint;
+  index: string | number | bigint;
+  networkFeeIndex: string | number | bigint;
 };
 
 export function retryWithExponentialBackoff<T>(
@@ -139,4 +148,44 @@ export async function getBulkRegistrationTxData(
 
 export function commaSeparatedList(value: string, _dummyPrevious: unknown) {
   return value.split(",").map((item: string) => parseInt(item));
+}
+
+export function getRegistrationTxDataV2(
+  keysharesPayload: KeysharesPayload[],
+  clusterSnapshot: ClusterSnapshotLike,
+): string {
+  // Guard against generating invalid calldata for an empty batch.
+  if (keysharesPayload.length === 0) {
+    throw new Error("Cannot build tx data with empty keyshares payload");
+  }
+
+  // Use the V2 ABI to manually encode registration calldata.
+  const iface = new Interface(SSVContractV2);
+  const operatorIds = keysharesPayload[0].operatorIds;
+  // Normalize snapshot values into Solidity-friendly numeric types.
+  const normalizedCluster = {
+    validatorCount: Number(clusterSnapshot.validatorCount),
+    networkFeeIndex: BigInt(clusterSnapshot.networkFeeIndex),
+    index: BigInt(clusterSnapshot.index),
+    active: clusterSnapshot.active,
+    balance: BigInt(clusterSnapshot.balance),
+  };
+
+  // Route to the single-validator function when batch size is 1.
+  if (keysharesPayload.length === 1) {
+    return iface.encodeFunctionData("registerValidator", [
+      keysharesPayload[0].publicKey,
+      operatorIds,
+      keysharesPayload[0].sharesData,
+      clusterSnapshot,
+    ]);
+  }
+
+  // Otherwise encode the bulk registration call.
+  return iface.encodeFunctionData("bulkRegisterValidator", [
+    keysharesPayload.map((item) => item.publicKey),
+    operatorIds,
+    keysharesPayload.map((item) => item.sharesData),
+    clusterSnapshot,
+  ]);
 }

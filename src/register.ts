@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Command } from "commander";
 import { SSVSDK, chains } from "@ssv-labs/ssv-sdk";
-import { createClusterId } from '@ssv-labs/ssv-sdk/utils'
 import { createPublicClient, createWalletClient, http, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createValidatorKeys, ValidatorKeys } from "./generate.js";
@@ -12,11 +11,10 @@ import {
 } from "./transaction.js";
 import {
   commaSeparatedList,
-  getBulkRegistrationTxData,
+  getRegistrationTxDataV2,
   retryWithExponentialBackoff,
   writeKeysToFiles,
 } from "./utils.js";
-import { ethers } from "ethers";
 
 import * as dotenv from "dotenv";
 import { readdir, readFile, writeFile, rename, access } from "fs/promises";
@@ -60,6 +58,11 @@ type ProgressState = {
   updatedAt: string;
 };
 
+function isTruthyEnv(value: string | undefined) {
+  if (!value) return false;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
 register
   .version("0.0.2", "-v, --vers", "output the current version")
   .argument(
@@ -99,10 +102,20 @@ register
       throw Error("No Subgraph API Key provided");
     if (!process.env.KEYSTORE_PASSWORD)
       throw Error("Keystore password not provided");
+    const directRegisterEnabled = isTruthyEnv(process.env.DIRECT_REGISTER);
+    const depositAmountEth = process.env.DEPOSIT_AMOUNT_ETH || "0.1";
+    let depositAmount: bigint;
+    try {
+      depositAmount = parseEther(depositAmountEth);
+    } catch {
+      throw Error("DEPOSIT_AMOUNT_ETH must be a valid decimal ETH value");
+    }
 
     console.log(
       `Registering keyshares to operators: ${JSON.stringify(operatorIds)}`,
     );
+    console.log(`Direct register mode: ${directRegisterEnabled}`);
+    console.log(`Deposit amount: ${depositAmountEth} ETH (${depositAmount.toString()} wei)`);
 
     const private_key = process.env.PRIVATE_KEY as `0x${string}`;
     let generateKeystores = false;
@@ -136,6 +149,7 @@ register
 
     const chain = process.env.TESTNET ? chains.hoodi : chains.mainnet;
     console.log(`Using chain with ID: ${chain.id}`);
+    console.log(`Chain: ${chain.name}`)
 
     const transport = http(process.env.RPC_ENDPOINT);
     const publicClient = createPublicClient({
@@ -149,6 +163,9 @@ register
       chain,
       transport,
     });
+    const ownerAddress = directRegisterEnabled
+      ? account.address
+      : (process.env.SAFE_ADDRESS as `0x${string}`);
 
     // Initialize SDK with viem clients
     const sdk = new SSVSDK({
@@ -163,11 +180,13 @@ register
       }
     });
 
-    const safeProtocolKit = await getSafeProtocolKit(
-      process.env.RPC_ENDPOINT,
-      process.env.PRIVATE_KEY,
-      process.env.SAFE_ADDRESS,
-    );
+    const safeProtocolKit = directRegisterEnabled
+      ? null
+      : await getSafeProtocolKit(
+          process.env.RPC_ENDPOINT,
+          process.env.PRIVATE_KEY,
+          process.env.SAFE_ADDRESS,
+        );
 
     console.log(`Collecting operator data...`);
     const operatorsData = (
@@ -233,16 +252,16 @@ register
     // need to initialize these
     let totalKeysRegistered = 0;
     let nonce = Number(
-      await sdk.api.getOwnerNonce({ owner: process.env.SAFE_ADDRESS }),
+      await sdk.api.getOwnerNonce({ owner: ownerAddress }),
     );
 
     let progress: ProgressState | null = null;
     let progressPath: string | null = null;
-    if (!generateKeystores) {
+    if (!generateKeystores && !directRegisterEnabled) {
       progressPath = `${keystoresDir}/${PROGRESS_FILENAME}`;
       const runId = createRunId({
         chainId: chain.id,
-        safeAddress: process.env.SAFE_ADDRESS,
+        safeAddress: ownerAddress,
         ssvContract: process.env.SSV_CONTRACT,
         operatorIds,
         chunkSize,
@@ -255,7 +274,7 @@ register
         runId,
         progressPath,
         chainId: chain.id,
-        safeAddress: process.env.SAFE_ADDRESS,
+        safeAddress: ownerAddress,
         ssvContract: process.env.SSV_CONTRACT,
         operatorIds,
         chunkSize,
@@ -287,7 +306,7 @@ register
         console.log(`Creating keystores (${currentChunkSize} keys)`);
         generatedKeystores = await createValidatorKeys({
           count: currentChunkSize,
-          withdrawal: process.env.SAFE_ADDRESS as `0x${string}`,
+          withdrawal: ownerAddress,
           password: process.env.KEYSTORE_PASSWORD,
         });
         keysToRegister = generatedKeystores.keystores;
@@ -322,7 +341,7 @@ register
       if (totalKeysRegistered != 0) {
         nonce = await retryWithExponentialBackoff(
           verifyUpdatedNonce,
-          { sdk, nonce, expectedNonce, ownerAddress: process.env.SAFE_ADDRESS },
+          { sdk, nonce, expectedNonce, ownerAddress },
           {
             retries: 3,
             factor: 2,
@@ -343,21 +362,73 @@ register
       // split keys into keyshares
       const keyshares = await sdk.utils.generateKeyShares({
         keystore: keysToRegister.map((keystore) => JSON.stringify(keystore)),
-        keystore_password: process.env.KEYSTORE_PASSWORD,
-        operator_keys: operatorsData.map((operator) => operator.publicKey),
-        operator_ids: operatorsData.map((operator) => Number(operator.id)),
-        owner_address: process.env.SAFE_ADDRESS,
+        keystorePassword: process.env.KEYSTORE_PASSWORD,
+        operatorKeys: operatorsData.map((operator) => operator.publicKey),
+        operatorIds: operatorsData.map((operator) => Number(operator.id)),
+        ownerAddress,
         nonce: nonce,
       });
+
+      
+        const clusterId = createClusterId(
+          ownerAddress,
+          operatorsData.map((operator) => Number(operator.id)),
+        );
+        const clusterSnapshot = await sdk.api.toSolidityCluster({ id: clusterId });
+        const snapshot = clusterSnapshot ? clusterSnapshot : {
+          validatorCount: 0,
+          networkFeeIndex: 0n,
+          index: 0n,
+          balance: 0n,
+          active: true,
+        };
         
-      let txData = await sdk.clusters.registerValidatorsRawData({args: {keyshares, depositAmount: parseEther("0.1")}})
+        // if (!clusterSnapshot) {
+        //   throw new Error(`Failed to retrieve cluster snapshot for cluster: ${clusterId}`);
+        // }
+        const txData = getRegistrationTxDataV2(keyshares, snapshot);
+
+        console.log("Submitting direct register transaction (Safe bypass + manual calldata)...");
+
+        // SDK direct path kept as fallback for A/B debugging:
+        // const tx = await sdk.clusters.registerValidators({ args: { keyshares, depositAmount } });
+        // const hash = await walletClient.sendTransaction({
+        //   account,
+        //   to: process.env.SSV_CONTRACT as `0x${string}`,
+        //   data: txData as `0x${string}`,
+        //   value: depositAmount,
+        // });
+        // console.log(`Direct register tx hash: ${hash}`);
+        // await publicClient.waitForTransactionReceipt({ hash });
+        // console.log("Direct register transaction confirmed.");
+        // if (generateKeystores) {
+        //   writeKeysToFiles(
+        //     generatedKeystores,
+        //     keyshares,
+        //     KEYSTORES_OUTPUT_DIRECTORY,
+        //   );
+        // }
+        // totalKeysRegistered += currentChunkSize;
+        // expectedNonce = nonce + currentChunkSize;
+        // console.log(
+        //   `Successfully registered ${totalKeysRegistered} keys so far. Last registered pubkey is ${keyshares[keyshares.length - 1].publicKey}. Moving on to the next batch...`,
+        // );
+      
+      
+
+      // const txData = await sdk.clusters.registerValidatorsRawData({
+      //   args: { keyshares, depositAmount },
+      // });
 
       // generate Safe TX
+      if (!safeProtocolKit) {
+        throw Error("Safe protocol kit is not initialized");
+      }
       const { safeTransaction: multiSigTransaction, safeTxHash } =
         await createApprovedMultiSigTx(
-        safeProtocolKit,
-        txData,
-      );
+          safeProtocolKit,
+          txData,
+        );
 
       if (progress && progressPath && activeBatch) {
         activeBatch.status = "approved";
@@ -615,4 +686,8 @@ async function verifyUpdatedNonce(options: {
   }
 
   return nonce;
+}
+
+function createClusterId(ownerAddress: string, operatorIds: number[]) {
+  return `${ownerAddress.toLowerCase()}-${operatorIds.join("-")}`;
 }
