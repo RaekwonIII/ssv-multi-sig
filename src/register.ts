@@ -384,42 +384,9 @@ register
           active: true,
         };
         
-        // if (!clusterSnapshot) {
-        //   throw new Error(`Failed to retrieve cluster snapshot for cluster: ${clusterId}`);
-        // }
         const txData = getRegistrationTxDataV2(keyshares, snapshot);
 
         console.log("Submitting direct register transaction (Safe bypass + manual calldata)...");
-
-        // SDK direct path kept as fallback for A/B debugging:
-        // const tx = await sdk.clusters.registerValidators({ args: { keyshares, depositAmount } });
-        // const hash = await walletClient.sendTransaction({
-        //   account,
-        //   to: process.env.SSV_CONTRACT as `0x${string}`,
-        //   data: txData as `0x${string}`,
-        //   value: depositAmount,
-        // });
-        // console.log(`Direct register tx hash: ${hash}`);
-        // await publicClient.waitForTransactionReceipt({ hash });
-        // console.log("Direct register transaction confirmed.");
-        // if (generateKeystores) {
-        //   writeKeysToFiles(
-        //     generatedKeystores,
-        //     keyshares,
-        //     KEYSTORES_OUTPUT_DIRECTORY,
-        //   );
-        // }
-        // totalKeysRegistered += currentChunkSize;
-        // expectedNonce = nonce + currentChunkSize;
-        // console.log(
-        //   `Successfully registered ${totalKeysRegistered} keys so far. Last registered pubkey is ${keyshares[keyshares.length - 1].publicKey}. Moving on to the next batch...`,
-        // );
-      
-      
-
-      // const txData = await sdk.clusters.registerValidatorsRawData({
-      //   args: { keyshares, depositAmount },
-      // });
 
       // generate Safe TX
       if (!safeProtocolKit) {
