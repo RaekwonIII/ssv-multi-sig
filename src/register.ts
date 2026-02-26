@@ -89,8 +89,6 @@ register
     } catch {
       throw Error("RPC endpoint must be a valid URL");
     }
-    if (!process.env.SSV_CONTRACT)
-      throw Error("No SSV contract address provided");
     if (!process.env.SUBGRAPH_API)
       throw Error("No Subgraph API endpoint provided");
     if (!process.env.SUBGRAPH_API_KEY)
@@ -104,6 +102,12 @@ register
     } catch {
       throw Error("DEPOSIT_AMOUNT_ETH must be a valid decimal ETH value");
     }
+    const ssvContractAddress = process.env.SSV_CONTRACT as `0x${string}` | undefined;
+    if (!ssvContractAddress) {
+      throw Error("No SSV contract address provided");
+    }
+    // Hoodi/testnet ABI is payable (value carries deposit); legacy/mainnet ABI is nonpayable (deposit is in calldata).
+    const safeTxValue = process.env.TESTNET ? depositAmount.toString() : "0";
 
     console.log(
       `Registering keyshares to operators: ${JSON.stringify(operatorIds)}`,
@@ -252,7 +256,7 @@ register
       const runId = createRunId({
         chainId: chain.id,
         safeAddress: ownerAddress,
-        ssvContract: process.env.SSV_CONTRACT,
+        ssvContract: ssvContractAddress,
         operatorIds,
         chunkSize,
         keystoreDir: keystoresDir,
@@ -265,7 +269,7 @@ register
         progressPath,
         chainId: chain.id,
         safeAddress: ownerAddress,
-        ssvContract: process.env.SSV_CONTRACT,
+        ssvContract: ssvContractAddress,
         operatorIds,
         chunkSize,
         keystoreDir: keystoresDir,
@@ -373,7 +377,7 @@ register
           active: true,
         };
         
-        const txData = getRegistrationTxDataV2(keyshares, snapshot);
+        const txData = getRegistrationTxDataV2(keyshares, snapshot, depositAmount);
 
       // generate Safe TX
       if (!safeProtocolKit) {
@@ -383,6 +387,8 @@ register
         await createApprovedMultiSigTx(
           safeProtocolKit,
           txData,
+          ssvContractAddress,
+          safeTxValue,
         );
 
       if (progress && progressPath && activeBatch) {

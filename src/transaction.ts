@@ -27,14 +27,16 @@ export async function getSafeProtocolKit(
 
 export async function createApprovedMultiSigTx(
   protocolKit: Safe,
-  transaction_data: string
+  transaction_data: string,
+  ssvContractAddress: string,
+  txValue: string,
 ) {
   console.log("Creating transaction...");
 
   const transactions: MetaTransactionData[] = [{
     // @ts-ignore
-    to: process.env.SSV_CONTRACT, // SSV contract address
-    value: '100000000000000000',
+    to: ssvContractAddress, // SSV contract address
+    value: txValue,
     data: transaction_data,
     operation: OperationType.Call
   }];

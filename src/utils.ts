@@ -3,7 +3,7 @@ import * as fs from "fs";
 import { ValidatorKeys } from "./generate";
 import { ethers, Interface } from "ethers";
 import SSVContract from "../abi/SSVNetwork.json";
-import SSVContractV2 from "../abi/SSVNetworkV2.json";
+import SSVContractHoodi from "../abi/SSVNetworkHoodi.json";
 
 export type KeysharesPayload = {
   publicKey: string;
@@ -114,8 +114,12 @@ export async function getBulkRegistrationTxData(
     networkFeeIndex: string;
 }
 ): Promise<string> {
+  const ssvContractAddress = process.env.SSV_CONTRACT;
+  if (!ssvContractAddress) {
+    throw new Error("No SSV contract address provided");
+  }
   let contract = new ethers.Contract(
-    process.env.SSV_CONTRACT || "",
+    ssvContractAddress,
     SSVContract,
     signer
   );
@@ -153,39 +157,59 @@ export function commaSeparatedList(value: string, _dummyPrevious: unknown) {
 export function getRegistrationTxDataV2(
   keysharesPayload: KeysharesPayload[],
   clusterSnapshot: ClusterSnapshotLike,
+  depositAmount?: bigint,
 ): string {
   // Guard against generating invalid calldata for an empty batch.
   if (keysharesPayload.length === 0) {
     throw new Error("Cannot build tx data with empty keyshares payload");
   }
 
-  // Use the V2 ABI to manually encode registration calldata.
-  const iface = new Interface(SSVContractV2);
+  // TESTNET uses Hoodi/V2 payable registration. Mainnet uses legacy amount-in-args registration.
+  const isTestnet = Boolean(process.env.TESTNET);
+  const iface = new Interface(isTestnet ? SSVContractHoodi : SSVContract);
   const operatorIds = keysharesPayload[0].operatorIds;
   // Normalize snapshot values into Solidity-friendly numeric types.
-  const normalizedCluster = {
-    validatorCount: Number(clusterSnapshot.validatorCount),
-    networkFeeIndex: BigInt(clusterSnapshot.networkFeeIndex),
-    index: BigInt(clusterSnapshot.index),
-    active: clusterSnapshot.active,
-    balance: BigInt(clusterSnapshot.balance),
-  };
+  // const normalizedCluster = {
+  //   validatorCount: Number(clusterSnapshot.validatorCount),
+  //   networkFeeIndex: BigInt(clusterSnapshot.networkFeeIndex),
+  //   index: BigInt(clusterSnapshot.index),
+  //   active: clusterSnapshot.active,
+  //   balance: BigInt(clusterSnapshot.balance),
+  // };
 
   // Route to the single-validator function when batch size is 1.
   if (keysharesPayload.length === 1) {
+    if (isTestnet) {
+      return iface.encodeFunctionData("registerValidator", [
+        keysharesPayload[0].publicKey,
+        operatorIds,
+        keysharesPayload[0].sharesData,
+        clusterSnapshot,
+      ]);
+    }
     return iface.encodeFunctionData("registerValidator", [
       keysharesPayload[0].publicKey,
       operatorIds,
       keysharesPayload[0].sharesData,
+      depositAmount,
       clusterSnapshot,
     ]);
   }
 
-  // Otherwise encode the bulk registration call.
+  if (isTestnet) {
+    return iface.encodeFunctionData("bulkRegisterValidator", [
+      keysharesPayload.map((item) => item.publicKey),
+      operatorIds,
+      keysharesPayload.map((item) => item.sharesData),
+      clusterSnapshot,
+    ]);
+  }
+
   return iface.encodeFunctionData("bulkRegisterValidator", [
     keysharesPayload.map((item) => item.publicKey),
     operatorIds,
     keysharesPayload.map((item) => item.sharesData),
+    depositAmount,
     clusterSnapshot,
   ]);
 }
