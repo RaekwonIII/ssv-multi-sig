@@ -163,9 +163,10 @@ register
       chain,
       transport,
     });
-    const ownerAddress = directRegisterEnabled
-      ? account.address
-      : (process.env.SAFE_ADDRESS as `0x${string}`);
+    // const ownerAddress = directRegisterEnabled
+    //   ? account.address
+    //   : (process.env.SAFE_ADDRESS as `0x${string}`);
+    const ownerAddress = process.env.SAFE_ADDRESS as `0x${string}`;
 
     // Initialize SDK with viem clients
     const sdk = new SSVSDK({
