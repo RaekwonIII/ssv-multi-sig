@@ -33,6 +33,8 @@ RPC_ENDPOINT=
 PRIVATE_KEY=
 # The address of the SSVNetwork smart contract
 SSV_CONTRACT=
+# Optional Safe baseGas override. Defaults to 50000 if not set.
+SAFE_BASE_GAS=
 # Optional deposit amount in ETH used for validator registration. Defaults to 0.1 if not set.
 DEPOSIT_AMOUNT_ETH=
 # The password that should be used to encrypt generated keystores files

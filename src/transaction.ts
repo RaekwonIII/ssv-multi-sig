@@ -41,8 +41,10 @@ export async function createApprovedMultiSigTx(
     operation: OperationType.Call
   }];
 
+  // Optional Safe baseGas override via env. Defaults to a small value.
+  const safeBaseGas = process.env.SAFE_BASE_GAS || "50000";
   const options: SafeTransactionOptionalProps = {
-    baseGas: '100000000000000000', // Optional
+    baseGas: safeBaseGas,
   }
 
   let safeTransaction = await protocolKit.createTransaction({
