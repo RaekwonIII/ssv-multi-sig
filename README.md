@@ -52,7 +52,7 @@ SUBGRAPH_API_KEY= # generate your API key **for free** here: https://thegraph.co
 To run the tool, launch the command:
 
 ```bash
-npm run start register <operatorIDs>
+npm run start register -- <operatorIDs>
 ```
 
 The `<operatorIDs>` argument is a comma-separated list of numbers (i.e. `1,2,3,4`), representing the operator IDs that will form the cluster to which validators will be registered.
@@ -66,13 +66,13 @@ You can also use `-k, --keystoresDir <keystores-dir>` to load existing keystore 
 Generate and register up to 50 new validators:
 
 ```bash
-npm run start register 1,2,3,4 -n 50
+npm run start register -- 1,2,3,4 -n 50
 ```
 
 Register validators from existing keystores in `./validator_keys`:
 
 ```bash
-npm run start register 1,2,3,4 -k ./validator_keys
+npm run start register -- 1,2,3,4 -k ./validator_keys
 ```
 
 ## 5. Resume behavior (`-k` mode)
