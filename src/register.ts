@@ -11,7 +11,7 @@ import {
 } from "./transaction.js";
 import {
   commaSeparatedList,
-  getRegistrationTxDataV2,
+  getRegistrationTxData,
   retryWithExponentialBackoff,
   writeKeysToFiles,
 } from "./utils.js";
@@ -143,6 +143,7 @@ register
     if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
       throw Error("CHUNK_SIZE must be a positive integer");
     }
+    const registrationNetwork = process.env.TESTNET ? "testnet" : "mainnet";
     console.log(`Maximum number of keys per transaction: ${chunkSize}.`);
 
     const chain = process.env.TESTNET ? chains.hoodi : chains.mainnet;
@@ -369,7 +370,12 @@ register
           operatorsData.map((operator) => Number(operator.id)),
         );
 
-        const txData = getRegistrationTxDataV2(keyshares, snapshot, depositAmount);
+        const txData = getRegistrationTxData({
+          keysharesPayload: keyshares,
+          clusterSnapshot: snapshot,
+          network: registrationNetwork,
+          depositAmount,
+        });
 
       // generate Safe TX
       if (!safeProtocolKit) {
