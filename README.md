@@ -35,8 +35,9 @@ PRIVATE_KEY=
 SSV_CONTRACT=
 # Optional Safe baseGas override. Defaults to 50000 if not set.
 SAFE_BASE_GAS=
-# Optional deposit amount in ETH used for validator registration. Defaults to 0.1 if not set.
-DEPOSIT_AMOUNT_ETH=
+# Optional deposit amount used for validator registration. Defaults to 0.1 if not set.
+# On Hoodi/testnet (payable path) this is tx value; on legacy mainnet (nonpayable path) this is the amount encoded in calldata.
+DEPOSIT_AMOUNT=
 # The password that should be used to encrypt generated keystores files
 KEYSTORE_PASSWORD=
 # the address of the multi-sig safe to be used for this script. This will effectively be the validator owner on SSV network

@@ -96,12 +96,12 @@ register
       throw Error("No Subgraph API Key provided");
     if (!process.env.KEYSTORE_PASSWORD)
       throw Error("Keystore password not provided");
-    const depositAmountEth = process.env.DEPOSIT_AMOUNT_ETH || "0.1";
+    const depositAmountInput = process.env.DEPOSIT_AMOUNT ?? "0.1";
     let depositAmount: bigint;
     try {
-      depositAmount = parseEther(depositAmountEth);
+      depositAmount = parseEther(depositAmountInput);
     } catch {
-      throw Error("DEPOSIT_AMOUNT_ETH must be a valid decimal ETH value");
+      throw Error("DEPOSIT_AMOUNT must be a valid decimal amount");
     }
     const ssvContractAddress = process.env.SSV_CONTRACT as `0x${string}` | undefined;
     if (!ssvContractAddress) {
@@ -113,7 +113,9 @@ register
     console.log(
       `Registering keyshares to operators: ${JSON.stringify(operatorIds)}`,
     );
-    console.log(`Deposit amount: ${depositAmountEth} ETH (${depositAmount.toString()} wei)`);
+    console.log(
+      `Deposit amount: ${depositAmountInput} (${depositAmount.toString()} wei)`,
+    );
 
     const private_key = process.env.PRIVATE_KEY as `0x${string}`;
     let generateKeystores = false;
@@ -339,10 +341,11 @@ register
           verifyUpdatedNonce,
           { sdk, nonce, expectedNonce, ownerAddress },
           {
-            retries: 3,
+            retries: 5,
             factor: 2,
-            maxTimeout: 10000,
-            maxRetryTime: 5000,
+            minTimeout: 2000,
+            maxTimeout: 15000,
+            maxRetryTime: 180000,
           },
         );
       }
@@ -358,10 +361,10 @@ register
       // split keys into keyshares
       const keyshares = await sdk.utils.generateKeyShares({
         keystore: keysToRegister.map((keystore) => JSON.stringify(keystore)),
-        keystorePassword: process.env.KEYSTORE_PASSWORD,
-        operatorKeys: operatorsData.map((operator) => operator.publicKey),
-        operatorIds: operatorsData.map((operator) => Number(operator.id)),
-        ownerAddress,
+        keystore_password: process.env.KEYSTORE_PASSWORD,
+        operator_keys: operatorsData.map((operator) => operator.publicKey),
+        operator_ids: operatorsData.map((operator) => Number(operator.id)),
+        owner_address: ownerAddress,
         nonce: nonce,
       });
 
