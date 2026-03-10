@@ -1,27 +1,32 @@
 import retry from "retry";
 import * as fs from "fs";
 import { ValidatorKeys } from "./generate";
-import { ethers } from "ethers";
+import { Interface } from "ethers";
 import SSVContract from "../abi/SSVNetwork.json";
+import SSVContractHoodi from "../abi/SSVNetworkHoodi.json";
 
-export type ShareObject = {
-  keySharesFilePath: string;
-  data: {
-    ownerNonce: number;
-    ownerAddress: string;
-    publicKey: string;
-    operators: [
-      {
-        id: number;
-        operatorKey: string;
-      }
-    ];
-  };
-  payload: {
-    publicKey: string;
-    operatorIds: number[];
-    sharesData: string;
-  };
+export type KeysharesPayload = {
+  publicKey: string;
+  operatorIds: number[];
+  sharesData: string;
+};
+
+type ClusterSnapshotLike = {
+  active: boolean;
+  validatorCount: string | number | bigint;
+  balance: string | number | bigint;
+  index: string | number | bigint;
+  networkFeeIndex: string | number | bigint;
+};
+
+type RegistrationNetwork = "testnet" | "mainnet";
+
+type RegistrationTxDataArgs = {
+  keysharesPayload: KeysharesPayload[];
+  clusterSnapshot: ClusterSnapshotLike;
+  network: RegistrationNetwork;
+  depositAmount?: bigint;
+  operatorIds?: number[];
 };
 
 export function retryWithExponentialBackoff<T>(
@@ -107,51 +112,65 @@ export function writeKeysToFiles(
   console.log(`Keystores files saved: ${outputPath}`);
 }
 
-export async function getBulkRegistrationTxData(
-  sharesDataObjectArray: ShareObject[],
-  ownerAddress: string,
-  signer: ethers.Wallet,
-  clusterSnapshot: {
-    validatorCount: number;
-    networkFeeIndex: bigint;
-    index: bigint;
-    active: boolean;
-    balance: bigint;
-  }
-): Promise<string> {
-  let contract = new ethers.Contract(
-    process.env.SSV_CONTRACT || "",
-    SSVContract,
-    signer
-  );
-
-  let pubkeys = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.publicKey;
-  });
-
-  let sharesData = sharesDataObjectArray.map((keyshareObj) => {
-    return keyshareObj.payload.sharesData;
-  });
-
-  let operatorIds = sharesDataObjectArray[0].payload.operatorIds;
-  let amount = ethers.parseEther("10");
-
-  console.log(`Current validator count: ${clusterSnapshot.validatorCount}`);
-
-  let transaction = await contract.bulkRegisterValidator.populateTransaction(
-    pubkeys,
-    operatorIds,
-    sharesData,
-    amount,
-    clusterSnapshot,
-    {
-      gasLimit: 3000000, // gas estimation does not work
-    }
-  );
-
-  return transaction.data;
-}
-
 export function commaSeparatedList(value: string, _dummyPrevious: unknown) {
   return value.split(",").map((item: string) => parseInt(item));
+}
+
+// Build registration calldata and route to the ABI encoder for the selected network.
+export function getRegistrationTxData(args: RegistrationTxDataArgs): string {
+  if (args.keysharesPayload.length === 0) {
+    throw new Error("Cannot build tx data with empty keyshares payload");
+  }
+
+  if (args.network === "testnet") {
+    return encodeHoodiRegistrationTxData(args);
+  }
+
+  return encodeMainnetRegistrationTxData(args);
+}
+
+// Hoodi/testnet encoder: payable ABI where amount is sent as tx value, not as a function arg.
+function encodeHoodiRegistrationTxData(args: RegistrationTxDataArgs): string {
+  const iface = new Interface(SSVContractHoodi);
+  const operatorIds = args.operatorIds ?? args.keysharesPayload[0].operatorIds;
+
+  if (args.keysharesPayload.length === 1) {
+    return iface.encodeFunctionData("registerValidator", [
+      args.keysharesPayload[0].publicKey,
+      operatorIds,
+      args.keysharesPayload[0].sharesData,
+      args.clusterSnapshot,
+    ]);
+  }
+
+  return iface.encodeFunctionData("bulkRegisterValidator", [
+    args.keysharesPayload.map((item) => item.publicKey),
+    operatorIds,
+    args.keysharesPayload.map((item) => item.sharesData),
+    args.clusterSnapshot,
+  ]);
+}
+
+// Mainnet encoder: nonpayable ABI where amount is passed as an explicit function arg.
+function encodeMainnetRegistrationTxData(args: RegistrationTxDataArgs): string {
+  const iface = new Interface(SSVContract);
+  const operatorIds = args.operatorIds ?? args.keysharesPayload[0].operatorIds;
+
+  if (args.keysharesPayload.length === 1) {
+    return iface.encodeFunctionData("registerValidator", [
+      args.keysharesPayload[0].publicKey,
+      operatorIds,
+      args.keysharesPayload[0].sharesData,
+      args.depositAmount,
+      args.clusterSnapshot,
+    ]);
+  }
+
+  return iface.encodeFunctionData("bulkRegisterValidator", [
+    args.keysharesPayload.map((item) => item.publicKey),
+    operatorIds,
+    args.keysharesPayload.map((item) => item.sharesData),
+    args.depositAmount,
+    args.clusterSnapshot,
+  ]);
 }

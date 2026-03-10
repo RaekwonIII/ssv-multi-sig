@@ -5,6 +5,7 @@ import {
 } from "@safe-global/safe-core-sdk-types";
 
 import SafeApiKit from "@safe-global/api-kit";
+import { SafeTransactionOptionalProps } from '@safe-global/protocol-kit'
 
 import Safe from "@safe-global/protocol-kit";
 import { TransactionResponse } from "ethers";
@@ -26,20 +27,29 @@ export async function getSafeProtocolKit(
 
 export async function createApprovedMultiSigTx(
   protocolKit: Safe,
-  transaction_data: string
+  transaction_data: string,
+  ssvContractAddress: string,
+  txValue: string,
 ) {
   console.log("Creating transaction...");
 
   const transactions: MetaTransactionData[] = [{
     // @ts-ignore
-    to: process.env.SSV_CONTRACT, // SSV contract address
-    value: '0',
+    to: ssvContractAddress, // SSV contract address
+    value: txValue,
     data: transaction_data,
     operation: OperationType.Call
   }];
 
+  // Optional Safe baseGas override via env. Defaults to a small value.
+  const safeBaseGas = process.env.SAFE_BASE_GAS || "50000";
+  const options: SafeTransactionOptionalProps = {
+    baseGas: safeBaseGas,
+  }
+
   let safeTransaction = await protocolKit.createTransaction({
     transactions: transactions,
+    options
   });
 
   const isValidTx = await protocolKit.isValidTransaction(
@@ -81,7 +91,7 @@ export async function createApprovedMultiSigTx(
   const ownersWhoApproved = await protocolKit.getOwnersWhoApprovedTx(safeTxHash);
   console.log(`Owners who approved: ${ownersWhoApproved.join(', ')}`);
   
-  return safeTransaction;
+  return { safeTransaction, safeTxHash };
 }
 
 export async function checkAndExecuteSignatures(
@@ -116,7 +126,7 @@ export async function checkAndExecuteSignatures(
       );
     else
       console.log(
-        "Transaction executed: https://holesky.etherscan.io/tx/" +
+        "Transaction executed: https://hoodi.etherscan.io/tx/" +
           executeTxResponse?.hash
       );
     return executeTxResponse?.hash;
